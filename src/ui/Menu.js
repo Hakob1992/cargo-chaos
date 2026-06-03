@@ -2,6 +2,7 @@ import { DELIVERIES } from '../data/deliveries.js';
 import { UPGRADES } from '../data/upgrades.js';
 import { VEHICLES } from '../data/vehicles.js';
 import { formatTime } from './HUD.js';
+import { VehicleViewer } from './VehicleViewer.js';
 
 // Garage / delivery-select screen and the post-run result card.
 export class Menu {
@@ -11,13 +12,23 @@ export class Menu {
     this.el = document.createElement('div');
     this.el.className = 'menu hidden';
     root.appendChild(this.el);
+    this.viewer = null;
+    this.vehicleIndex = 0; // which vehicle the showroom is displaying
   }
 
   hide() {
+    this.#disposeViewer();
     this.el.classList.add('hidden');
   }
 
+  #disposeViewer() {
+    if (this.viewer) { this.viewer.dispose(); this.viewer = null; }
+  }
+
   showGarage() {
+    // A fresh innerHTML wipes the old viewer canvas — tear its WebGL context
+    // down first so contexts don't leak across re-renders (upgrade purchases).
+    this.#disposeViewer();
     this.el.classList.remove('hidden');
     this.el.innerHTML = `
       <div class="garage">
@@ -28,6 +39,20 @@ export class Menu {
             <div class="money">$ ${this.save.money.toLocaleString()}</div>
           </div>
         </header>
+
+        <section class="panel showroom-panel">
+          <h2>GARAGE</h2>
+          <div class="showroom">
+            <button class="sr-arrow" data-sr-prev aria-label="Previous vehicle">&#8249;</button>
+            <div class="sr-stage"></div>
+            <button class="sr-arrow" data-sr-next aria-label="Next vehicle">&#8250;</button>
+          </div>
+          <div class="sr-info">
+            <div class="sr-name"></div>
+            <div class="sr-status"></div>
+          </div>
+          <div class="sr-hint">Drag to rotate · scroll to zoom</div>
+        </section>
 
         <div class="garage-grid">
           <section class="panel">
@@ -48,12 +73,52 @@ export class Menu {
     this.el.querySelector('[data-reset]').addEventListener('click', () => {
       if (confirm('Reset all progress — money, upgrades and best scores?')) {
         this.save.reset();
+        this.vehicleIndex = 0;
         this.showGarage();
       }
     });
     this.#renderDeliveries();
     this.#renderUpgrades();
     this.#renderVehicles();
+    this.#initShowroom();
+  }
+
+  // ---- Showroom (3D vehicle viewer) ---------------------------------------
+
+  #initShowroom() {
+    const stage = this.el.querySelector('.sr-stage');
+    this.viewer = new VehicleViewer(stage);
+    this.el.querySelector('[data-sr-prev]').addEventListener('click', () => this.#cycleVehicle(-1));
+    this.el.querySelector('[data-sr-next]').addEventListener('click', () => this.#cycleVehicle(1));
+    this.#showVehicleAt(this.vehicleIndex);
+  }
+
+  #cycleVehicle(dir) {
+    const n = VEHICLES.length;
+    this.#showVehicleAt((this.vehicleIndex + dir + n) % n);
+  }
+
+  #showVehicleAt(index) {
+    this.vehicleIndex = index;
+    const v = VEHICLES[index];
+    if (this.viewer) this.viewer.showVehicle(v);
+
+    const nameEl = this.el.querySelector('.sr-name');
+    const statusEl = this.el.querySelector('.sr-status');
+    if (nameEl) nameEl.textContent = v.name;
+    if (statusEl) {
+      if (v.playable) {
+        statusEl.textContent = 'ACTIVE';
+        statusEl.className = 'sr-status owned';
+      } else {
+        statusEl.textContent = 'LOCKED · $' + v.unlockCost.toLocaleString();
+        statusEl.className = 'sr-status locked';
+      }
+    }
+    // Reflect the selection on the vehicle chips.
+    this.el.querySelectorAll('.vehicle-chip').forEach((chip, i) => {
+      chip.classList.toggle('selected', i === index);
+    });
   }
 
   #renderDeliveries() {
@@ -112,18 +177,21 @@ export class Menu {
   #renderVehicles() {
     const wrap = this.el.querySelector('.vehicles');
     wrap.innerHTML = '';
-    VEHICLES.forEach((v) => {
-      const chip = document.createElement('div');
+    VEHICLES.forEach((v, i) => {
+      const chip = document.createElement('button');
       chip.className = 'vehicle-chip' + (v.playable ? ' owned' : ' locked');
       chip.innerHTML = `
         <span class="v-name">${v.name}</span>
         <span class="v-status">${v.playable ? 'ACTIVE' : 'LOCKED · $' + v.unlockCost.toLocaleString()}</span>
       `;
+      // Clicking a chip previews that vehicle in the 3D showroom.
+      chip.addEventListener('click', () => this.#showVehicleAt(i));
       wrap.appendChild(chip);
     });
   }
 
   showResult({ delivery, integrity, rating, earnings, time, insured }) {
+    this.#disposeViewer();
     this.el.classList.remove('hidden');
     const cls = rating.toLowerCase();
     this.el.innerHTML = `

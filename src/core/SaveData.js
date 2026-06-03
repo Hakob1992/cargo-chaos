@@ -1,6 +1,6 @@
 // Persistent progress: money, purchased upgrade levels, best result per delivery.
 const KEY = 'cargo_chaos_save_v1';
-const START_MONEY = 1000;
+const START_MONEY = 0;
 
 export class SaveData {
   constructor() {

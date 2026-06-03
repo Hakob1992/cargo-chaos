@@ -184,11 +184,21 @@ export class Game {
     let steps = 0;
     while (this.accumulator >= FIXED && steps < 5) {
       this.truck.update(control, FIXED);
+      // Snapshot both bodies' transforms IMMEDIATELY BEFORE this step. After the
+      // loop, _prev holds the second-most-recent state and the live body holds
+      // the most-recent one — the two consecutive states sync() interpolates
+      // between (canonical fixed-timestep interpolation). Capturing here, rather
+      // than once before the loop, keeps the pair adjacent even when 0 or 2+
+      // steps run in a frame — that mismatch was the source of the vibration.
+      this.truck.capturePreStepState();
+      this.cargo.capturePreStepState();
       this.physics.step();
       // Impacts reported this step damage the cargo, scaled by force magnitude.
       this.physics.drainContactForces((a, b, magnitude) => {
         if (a === 'cargo' || b === 'cargo') this.cargo.registerImpact(magnitude);
       });
+      // Damage/age logic runs on the fixed step for frame-rate independence.
+      this.cargo.update(FIXED);
       this.accumulator -= FIXED;
       steps++;
       this.elapsed += FIXED;
@@ -196,8 +206,12 @@ export class Game {
   }
 
   #updateRun(dt) {
-    this.truck.sync();
-    this.cargo.update(dt);
+    // alpha is the leftover fraction of a fixed step — used to interpolate the
+    // truck + cargo meshes between the pre-step and post-step physics positions
+    // so both move in lockstep with no jitter.
+    const alpha = this.accumulator / FIXED;
+    this.truck.sync(alpha);
+    this.cargo.sync(alpha);
 
     // R recovers the truck upright; bring the cargo back onto the bed with it.
     if (this.input.consumeReset()) {
@@ -226,7 +240,10 @@ export class Game {
 
   #computeCamDesired() {
     if (!this.truck) return;
-    const pos = this.truck.position;
+    // Follow the INTERPOLATED mesh position (group.position), NOT the raw 60 Hz
+    // body position. Tracking the raw body made the camera step while the truck
+    // glided, which read as world-wide stutter / "frame drops".
+    const pos = this.truck.group.position;
     const q = this.truck.group.quaternion;
     const yaw = new THREE.Euler().setFromQuaternion(q, 'YXZ').y;
     const offset = new THREE.Vector3(0, 4.5, -9).applyAxisAngle(UP, yaw);

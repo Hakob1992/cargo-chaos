@@ -7,6 +7,11 @@ import { RAPIER } from '../core/Physics.js';
 //   - falling off the truck / off the world
 // Optional "straps" (a spring joint to the chassis) keep it from sliding.
 const UP = new THREE.Vector3(0, 1, 0);
+// Resting Z of the cargo on the truck bed, in truck-local space. The GLB's open
+// bed runs from the tailgate (z ≈ -1.58) to the cab's rear wall (z ≈ -0.25), so
+// it is centred around z ≈ -0.9. Cargo footprints are capped (see deliveries.js
+// size[2] ≤ 0.6) so their front face stays behind the cab and never clips it.
+const BED_Z = -0.95;
 
 export class Cargo {
   constructor(scene, physics, delivery, truck) {
@@ -21,6 +26,13 @@ export class Cargo {
     this.settleTime = 0.9;     // grace period while truck + cargo settle
     this._localUp = new THREE.Vector3();
     this._q = new THREE.Quaternion();
+    // Render-interpolation buffers (mirror the Truck) so the cargo glides at the
+    // same cadence as the smoothly-interpolated truck instead of snapping to raw
+    // 60 Hz physics positions — that mismatch made the cargo appear to vibrate.
+    this._prevT = null;
+    this._prevR = null;
+    this._interpQ = new THREE.Quaternion();
+    this._currQ = new THREE.Quaternion();
 
     const [hx, hy, hz] = delivery.size;
     this.halfH = hy;
@@ -30,7 +42,7 @@ export class Cargo {
     this.bedFloor = 0.3;
     const spawn = truck.position.clone();
     const spawnQ = truck.group.quaternion;
-    const offset = new THREE.Vector3(0, bedTop + hy, -0.4).applyQuaternion(spawnQ);
+    const offset = new THREE.Vector3(0, bedTop + hy, BED_Z).applyQuaternion(spawnQ);
     spawn.add(offset);
 
     const desc = RAPIER.RigidBodyDesc.dynamic()
@@ -90,7 +102,7 @@ export class Cargo {
     const strength = this.truck.tuning.straps; // 40 baseline, higher with upgrade
     // Anchor low — bed floor on the truck, cargo's underside on the cargo — so
     // the strap acts near both centres of mass and doesn't torque/flip the truck.
-    const anchorTruck = { x: 0, y: this.bedFloor, z: -0.4 };
+    const anchorTruck = { x: 0, y: this.bedFloor, z: BED_Z };
     const anchorCargo = { x: 0, y: -this.halfH, z: 0 };
     const stiffness = strength * 120;
     const damping = strength * 8;
@@ -121,12 +133,42 @@ export class Cargo {
     this.mesh.material.opacity = 0.6;
   }
 
+  // Snapshot the body transform immediately before a physics step, so sync()
+  // can interpolate between the two most recent states (matches the Truck).
+  capturePreStepState() {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this._prevT = { x: t.x, y: t.y, z: t.z };
+    this._prevR = { x: r.x, y: r.y, z: r.z, w: r.w };
+  }
+
+  // Interpolated visual update — call once per render frame with the same alpha
+  // (accumulator / FIXED) the truck uses, so both move in lockstep.
+  sync(alpha = 1) {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    if (this._prevT && alpha < 0.999) {
+      const a = alpha;
+      this.mesh.position.set(
+        this._prevT.x + (t.x - this._prevT.x) * a,
+        this._prevT.y + (t.y - this._prevT.y) * a,
+        this._prevT.z + (t.z - this._prevT.z) * a
+      );
+      this._interpQ.set(this._prevR.x, this._prevR.y, this._prevR.z, this._prevR.w);
+      this._currQ.set(r.x, r.y, r.z, r.w);
+      this._interpQ.slerp(this._currQ, a);
+      this.mesh.quaternion.copy(this._interpQ);
+    } else {
+      this.mesh.position.set(t.x, t.y, t.z);
+      this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    }
+  }
+
+  // Damage / age logic — runs on the fixed physics step (not the render frame).
   update(dt) {
     this.age += dt;
     const t = this.body.translation();
     const r = this.body.rotation();
-    this.mesh.position.set(t.x, t.y, t.z);
-    this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
 
     if (this.broken || this.age < this.settleTime) return;
 
@@ -153,11 +195,13 @@ export class Cargo {
     const tr = this.truck.body.translation();
     const rot = this.truck.body.rotation();
     this._q.set(rot.x, rot.y, rot.z, rot.w);
-    const offset = new THREE.Vector3(0, this.bedFloor + 0.04 + this.halfH, -0.4).applyQuaternion(this._q);
+    const offset = new THREE.Vector3(0, this.bedFloor + 0.04 + this.halfH, BED_Z).applyQuaternion(this._q);
     this.body.setTranslation({ x: tr.x + offset.x, y: tr.y + offset.y, z: tr.z + offset.z }, true);
     this.body.setRotation(rot, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this._prevT = null;
+    this._prevR = null;
   }
 
   get integrity() {
