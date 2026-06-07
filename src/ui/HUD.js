@@ -82,7 +82,8 @@ export class HUD {
   update({ time, damage, speed, gear }) {
     this.timeEl.textContent = formatTime(time);
     this.damageEl.textContent = `${damage}%`;
-    this.damageEl.style.color = damage > 50 ? '#ff5a4d' : damage > 20 ? '#ffb84d' : '#7CFFA0';
+    // Darker, saturated inks so they read on the cream HUD panel.
+    this.damageEl.style.color = damage > 50 ? '#c0291c' : damage > 20 ? '#cf7a16' : '#1f9d4f';
     this.speedEl.textContent = speed;
     this.gearEl.textContent = gear;
   }

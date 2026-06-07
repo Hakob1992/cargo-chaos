@@ -20,3 +20,12 @@ Thumbs.db
 
 # Local Claude Code settings (personal, machine-specific)
 .claude/settings.local.json
+.claude/launch.json
+
+# Agent tooling / installed skills (not part of the game)
+.agents/
+.claude/skills/
+skills-lock.json
+
+# Blender auto-backups
+*.blend1

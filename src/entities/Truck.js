@@ -93,8 +93,20 @@ export class Truck {
       this.controller.setWheelSuspensionRelaxation(i, tuning.shocks * 2 + 3.0);
       this.controller.setWheelFrictionSlip(i, tuning.tires);
       this.controller.setWheelMaxSuspensionForce(i, 1000000);
-      // Rear wheels grip harder sideways to curb spin-outs.
-      this.controller.setWheelSideFrictionStiffness(i, i >= 2 ? 1.0 : 0.7);
+      // Mostly grippy & controllable, with just a hint of rear looseness for
+      // character (rear a touch lower than front). Not a drift machine.
+      this.controller.setWheelSideFrictionStiffness(i, i >= 2 ? 0.85 : 1.0);
+    }
+  }
+
+  // Scale tyre grip by a multiplier (e.g. <1 on mud) so the truck slides when
+  // traction is low. Cached so we only touch the controller on change.
+  applyGrip(mult) {
+    if (this._grip === mult) return;
+    this._grip = mult;
+    for (let i = 0; i < 4; i++) {
+      this.controller.setWheelFrictionSlip(i, this.tuning.tires * mult);
+      this.controller.setWheelSideFrictionStiffness(i, (i >= 2 ? 0.85 : 1.0) * mult);
     }
   }
 
@@ -251,7 +263,8 @@ export class Truck {
   update(control, dt) {
     // Smooth steering toward target for a less twitchy feel.
     const targetSteer = -control.steer * MAX_STEER;
-    this.steerAngle += (targetSteer - this.steerAngle) * Math.min(1, dt * 8);
+    // Slightly more responsive than stock (dt*8) without being twitchy.
+    this.steerAngle += (targetSteer - this.steerAngle) * Math.min(1, dt * 9);
 
     // Cut drive force past the arcade top speed so the light chassis doesn't
     // run away. Only limits powered acceleration, not coasting/downhill.

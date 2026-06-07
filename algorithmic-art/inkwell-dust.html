@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inkwell Dust — Generative Art</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js" integrity="sha512-bcfltY+lNLlNxz38yBBm/HLaUB1gTV6I0e+fahbF9pS6roIdzUytozWdnFV8ZnM6cSAG5EbmO0ag0a/fLZSG4Q==" crossorigin="anonymous"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --anthropic-dark:       #141413;
+            --anthropic-light:      #faf9f5;
+            --anthropic-mid-gray:   #b0aea5;
+            --anthropic-light-gray: #e8e6dc;
+            --anthropic-orange:     #d97757;
+            --anthropic-blue:       #6a9bcc;
+            --anthropic-green:      #788c5d;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
+            min-height: 100vh; color: var(--anthropic-dark);
+        }
+        .container { display: flex; min-height: 100vh; padding: 20px; gap: 20px; }
+        .sidebar {
+            width: 320px; flex-shrink: 0; background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px); padding: 24px; border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(20,20,19,0.1); overflow-y: auto; overflow-x: hidden;
+        }
+        .sidebar h1 { font-family: 'Lora', serif; font-size: 24px; font-weight: 500; margin-bottom: 8px; }
+        .sidebar .subtitle { color: var(--anthropic-mid-gray); font-size: 13px; margin-bottom: 28px; line-height: 1.5; }
+        .control-section { margin-bottom: 28px; }
+        .control-section h3 {
+            font-size: 15px; font-weight: 600; margin-bottom: 14px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .control-section h3::before { content: '•'; color: var(--anthropic-orange); font-weight: bold; }
+        .seed-input {
+            width: 100%; background: var(--anthropic-light); padding: 12px; border-radius: 8px;
+            font-family: 'Courier New', monospace; font-size: 14px; margin-bottom: 12px;
+            border: 1px solid var(--anthropic-light-gray); text-align: center; color: var(--anthropic-dark);
+        }
+        .seed-input:focus { outline: none; border-color: var(--anthropic-orange); box-shadow: 0 0 0 2px rgba(217,119,87,0.1); background: white; }
+        .seed-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+        .control-group { margin-bottom: 18px; }
+        .control-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 7px; }
+        .slider-container { display: flex; align-items: center; gap: 12px; }
+        .slider-container input[type="range"] {
+            flex: 1; height: 4px; background: var(--anthropic-light-gray);
+            border-radius: 2px; outline: none; -webkit-appearance: none;
+        }
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px; background: var(--anthropic-orange);
+            border-radius: 50%; cursor: pointer; transition: all 0.2s ease;
+        }
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); background: #c86641; }
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 16px; height: 16px; background: var(--anthropic-orange); border-radius: 50%; border: none; cursor: pointer;
+        }
+        .value-display { font-family: 'Courier New', monospace; font-size: 12px; color: var(--anthropic-mid-gray); min-width: 42px; text-align: right; }
+        .color-group { margin-bottom: 14px; }
+        .color-group label { display: block; font-size: 12px; color: var(--anthropic-mid-gray); margin-bottom: 4px; }
+        .color-picker-container { display: flex; align-items: center; gap: 8px; }
+        .color-picker-container input[type="color"] { width: 32px; height: 32px; border: none; border-radius: 6px; cursor: pointer; background: none; padding: 0; }
+        .color-value { font-family: 'Courier New', monospace; font-size: 12px; color: var(--anthropic-mid-gray); }
+        .button {
+            background: var(--anthropic-orange); color: white; border: none; padding: 10px 16px;
+            border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer;
+            transition: all 0.2s ease; width: 100%; font-family: 'Poppins', sans-serif;
+        }
+        .button:hover { background: #c86641; transform: translateY(-1px); }
+        .button:active { transform: translateY(0); }
+        .button.secondary { background: var(--anthropic-blue); }
+        .button.secondary:hover { background: #5a8bb8; }
+        .button.tertiary { background: var(--anthropic-green); }
+        .button.tertiary:hover { background: #6b7b52; }
+        .button-row { display: flex; gap: 8px; }
+        .button-row .button { flex: 1; }
+        .canvas-area { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; }
+        #canvas-container {
+            width: 100%; max-width: 1000px; border-radius: 12px; overflow: hidden;
+            box-shadow: 0 20px 40px rgba(20,20,19,0.18); background: #2a2018;
+        }
+        #canvas-container canvas { display: block; width: 100% !important; height: auto !important; }
+        .loading {
+            display: flex; align-items: center; justify-content: center; min-height: 600px;
+            font-size: 16px; color: #a09080; font-family: 'Lora', serif; font-style: italic;
+        }
+        .wheel-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+        .wl-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--anthropic-mid-gray); }
+        .wl-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid #2c2014; }
+        @media (max-width: 640px) { .container { flex-direction: column; } .sidebar { width: 100%; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="sidebar">
+        <h1>Inkwell Dust</h1>
+        <div class="subtitle">Rubber-hose cartoon dust from the inkwell age — bumpy ink-outlined poofs blooming across a faded sepia reel.</div>
+
+        <!-- Seed -->
+        <div class="control-section">
+            <h3>Seed</h3>
+            <input type="number" id="seed-input" class="seed-input" value="12345" onchange="updateSeed()">
+            <div class="seed-controls">
+                <button class="button secondary" onclick="previousSeed()">← Prev</button>
+                <button class="button secondary" onclick="nextSeed()">Next →</button>
+            </div>
+            <button class="button tertiary" style="margin-bottom:0" onclick="randomSeedAndUpdate()">↻ Random</button>
+        </div>
+
+        <!-- Parameters -->
+        <div class="control-section">
+            <h3>Parameters</h3>
+
+            <div class="control-group">
+                <label>Formation Speed</label>
+                <div class="slider-container">
+                    <input type="range" id="speed" min="0.4" max="4.0" step="0.1" value="1.8" oninput="updateParam('speed', this.value)">
+                    <span class="value-display" id="speed-value">1.8</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Emit Rate</label>
+                <div class="slider-container">
+                    <input type="range" id="emitRate" min="1" max="6" step="1" value="2" oninput="updateParam('emitRate', this.value)">
+                    <span class="value-display" id="emitRate-value">2</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Poof Lifespan</label>
+                <div class="slider-container">
+                    <input type="range" id="particleLife" min="30" max="160" step="5" value="80" oninput="updateParam('particleLife', this.value)">
+                    <span class="value-display" id="particleLife-value">80</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Poof Size</label>
+                <div class="slider-container">
+                    <input type="range" id="puffSize" min="20" max="120" step="2" value="68" oninput="updateParam('puffSize', this.value)">
+                    <span class="value-display" id="puffSize-value">68</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Puffiness</label>
+                <div class="slider-container">
+                    <input type="range" id="lobes" min="4" max="11" step="1" value="7" oninput="updateParam('lobes', this.value)">
+                    <span class="value-display" id="lobes-value">7</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Turbulence</label>
+                <div class="slider-container">
+                    <input type="range" id="turbulence" min="0" max="2.0" step="0.1" value="0.4" oninput="updateParam('turbulence', this.value)">
+                    <span class="value-display" id="turbulence-value">0.4</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Ink Weight</label>
+                <div class="slider-container">
+                    <input type="range" id="outline" min="1" max="9" step="0.5" value="4" oninput="updateParam('outline', this.value)">
+                    <span class="value-display" id="outline-value">4</span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Reel Memory</label>
+                <div class="slider-container">
+                    <input type="range" id="trailFade" min="2" max="40" step="1" value="24" oninput="updateParam('trailFade', this.value)">
+                    <span class="value-display" id="trailFade-value">24</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Colors -->
+        <div class="control-section">
+            <h3>Inks</h3>
+            <div class="color-group">
+                <label>Cloud Cream</label>
+                <div class="color-picker-container">
+                    <input type="color" id="cloudColor" value="#f2e8cf" onchange="updateColor('cloud', this.value)">
+                    <span class="color-value" id="cloud-value">#f2e8cf</span>
+                </div>
+            </div>
+            <div class="color-group">
+                <label>Sepia Shadow</label>
+                <div class="color-picker-container">
+                    <input type="color" id="shadowColor" value="#bfa074" onchange="updateColor('shadow', this.value)">
+                    <span class="color-value" id="shadow-value">#bfa074</span>
+                </div>
+            </div>
+            <div class="color-group">
+                <label>Ink Outline</label>
+                <div class="color-picker-container">
+                    <input type="color" id="inkColor" value="#2c2014" onchange="updateColor('ink', this.value)">
+                    <span class="color-value" id="ink-value">#2c2014</span>
+                </div>
+            </div>
+            <div class="color-group">
+                <label>Reel Tone</label>
+                <div class="color-picker-container">
+                    <input type="color" id="bgColor" value="#c2a577" onchange="updateColor('bg', this.value)">
+                    <span class="color-value" id="bg-value">#c2a577</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="control-section">
+            <h3>Actions</h3>
+            <div class="button-row">
+                <button class="button secondary" onclick="resetParameters()">Reset</button>
+                <button class="button" onclick="doSave()">Save PNG</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="canvas-area">
+        <div id="canvas-container">
+            <div class="loading" id="loading-msg">Threading the reel…</div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// INKWELL DUST — 1930s rubber-hose cartoon dust generator
+//
+// Four wheel-contact emitters wander a noise path, spitting bumpy cream
+// "poof" clouds. Each poof is a committee of lobes rendered with a
+// two-pass ink technique (dark stamp, then cream stamp a hair smaller) so
+// overlapping circles resolve into one continuous hand-inked silhouette.
+// Aged sepia reel tone, baked film grain, breathing once per seed.
+// ═══════════════════════════════════════════════════════════════════════
+
+let params = {
+    seed:         12345,
+    speed:        1.8,
+    emitRate:     2,
+    particleLife: 80,
+    puffSize:     68,
+    lobes:        7,
+    turbulence:   0.4,
+    outline:      4,
+    trailFade:    24,
+    cloud:  '#f2e8cf',
+    shadow: '#bfa074',
+    ink:    '#2c2014',
+    bg:     '#c2a577',
+};
+const defaultParams = { ...params };
+
+let cx, cy, headingAngle, noiseOffset, currentSpeed;
+let particles = [];
+let cloudCol, shadowCol, inkCol, bgLight, bgDark;
+let bgBuffer;
+
+const WHEEL_SPAN = 50;  // half track width (px)
+const AXLE_SPAN  = 40;  // half wheelbase (px)
+
+// ── Cartoon Poof ─────────────────────────────────────────────────────
+
+class Poof {
+    constructor(x, y, wheelIdx, formSpd) {
+        this.x = x + random(-4, 4);
+        this.y = y + random(-4, 4);
+        this.wi = wheelIdx;
+
+        // Backward spray in a perturbed cone
+        let backAngle = headingAngle + PI + random(-0.42, 0.42);
+        let spd = max(0.5, formSpd) * random(0.4, 1.7) + random(0.3, 1.4);
+        this.vx = cos(backAngle) * spd;
+        this.vy = sin(backAngle) * spd;
+
+        // Lateral kick — left wheels left, right wheels right
+        let lateralSign = (wheelIdx % 2 === 0) ? -1 : 1;
+        let px = -sin(headingAngle), py = cos(headingAngle);
+        let lStr = random(0.1, 0.5) * lateralSign;
+        this.vx += px * lStr;
+        this.vy += py * lStr;
+
+        this.nx = random(10000);
+        this.ny = random(20000);
+        this.spin = random(-0.012, 0.012);
+        this.rot  = random(TWO_PI);
+
+        this.age = 0;
+        this.maxAge = params.particleLife * random(0.8, 1.2);
+
+        // Front wheels pressed harder → slightly bigger poofs
+        let szMult = (wheelIdx < 2) ? 1.15 : 1.0;
+        this.initR = random(6, 12) * szMult;
+
+        // Pre-seed the lobe layout (committee of circles) in relative units.
+        this.lobes = [];
+        this.lobes.push({ a: 0, d: 0, s: random(0.78, 0.95) }); // central body
+        let n = floor(params.lobes);
+        for (let i = 0; i < n; i++) {
+            let a = (i / n) * TWO_PI + random(-0.32, 0.32);
+            let d = random(0.48, 0.82);
+            let s = random(0.40, 0.66);
+            this.lobes.push({ a, d, s });
+        }
+        // tiny highlight lobe (top-left of body) for a touch of dimension
+        this.hi = { a: -2.3, d: 0.32, s: 0.30 };
+        this.alive = true;
+    }
+
+    update() {
+        this.age++;
+        if (this.age >= this.maxAge) { this.alive = false; return; }
+        let nt = this.age * 0.02;
+        this.vx += (noise(this.nx + nt) - 0.5) * params.turbulence * 1.3;
+        this.vy += (noise(this.ny + nt) - 0.5) * params.turbulence * 1.3;
+        this.vx *= 0.945;
+        this.vy *= 0.945;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.rot += this.spin;
+    }
+
+    display() {
+        let t = this.age / this.maxAge;
+        let r = lerp(this.initR, params.puffSize, pow(t, 0.45));
+        let a = pow(1 - t, 0.72);             // concave fade — poofs hang then vanish
+        let outA = 240 * a;
+        let filA = 255 * a;
+
+        // Fill cools cream → sepia shadow as it ages
+        let fc = lerpColor(cloudCol, shadowCol, constrain(t * 1.05, 0, 1));
+
+        let ca = cos(this.rot), sa = sin(this.rot);
+        let ow = params.outline;
+
+        // PASS 1 — ink silhouette (dark, enlarged)
+        noStroke();
+        fill(red(inkCol), green(inkCol), blue(inkCol), outA);
+        for (const lobe of this.lobes) {
+            let dx = cos(lobe.a) * lobe.d * r;
+            let dy = sin(lobe.a) * lobe.d * r;
+            let lx = this.x + dx * ca - dy * sa;
+            let ly = this.y + dx * sa + dy * ca;
+            let lr = lobe.s * r + ow;
+            ellipse(lx, ly, lr * 2, lr * 2);
+        }
+
+        // PASS 2 — cream fill (a hair smaller → leaves only the rim as outline)
+        fill(red(fc), green(fc), blue(fc), filA);
+        for (const lobe of this.lobes) {
+            let dx = cos(lobe.a) * lobe.d * r;
+            let dy = sin(lobe.a) * lobe.d * r;
+            let lx = this.x + dx * ca - dy * sa;
+            let ly = this.y + dx * sa + dy * ca;
+            let lr = lobe.s * r;
+            ellipse(lx, ly, lr * 2, lr * 2);
+        }
+
+        // Soft highlight — barely-there lighter dab near the top
+        if (t < 0.7) {
+            let dx = cos(this.hi.a) * this.hi.d * r;
+            let dy = sin(this.hi.a) * this.hi.d * r;
+            let lx = this.x + dx * ca - dy * sa;
+            let ly = this.y + dx * sa + dy * ca;
+            fill(255, 252, 240, 70 * a);
+            ellipse(lx, ly, this.hi.s * r * 2, this.hi.s * r * 2);
+        }
+    }
+}
+
+// ── Formation ────────────────────────────────────────────────────────
+
+function updateFormation() {
+    let t = noiseOffset;
+    let nvx = (noise(t * 0.55) - 0.5) * 2;
+    let nvy = (noise(t * 0.55 + 314.159) - 0.5) * 2;
+    let spdMod = 0.42 + noise(t * 0.11 + 99.9) * 1.35;
+
+    let margin = 150, bx = 0, by = 0;
+    if (cx < margin)               bx =  pow((margin - cx) / margin, 1.4) * 2.0;
+    else if (cx > width - margin)  bx = -pow((cx - (width - margin)) / margin, 1.4) * 2.0;
+    if (cy < margin)               by =  pow((margin - cy) / margin, 1.4) * 2.0;
+    else if (cy > height - margin) by = -pow((cy - (height - margin)) / margin, 1.4) * 2.0;
+
+    let vx = (nvx + bx) * spdMod * params.speed * 3.6;
+    let vy = (nvy + by) * spdMod * params.speed * 3.6;
+    cx += vx; cy += vy;
+    currentSpeed = sqrt(vx * vx + vy * vy);
+    if (currentSpeed > 0.18) headingAngle = atan2(vy, vx);
+    noiseOffset += 0.0082;
+}
+
+function wheelPositions() {
+    let fX = cos(headingAngle), fY = sin(headingAngle);
+    let rX = -sin(headingAngle), rY = cos(headingAngle);
+    return [
+        { x: cx + fX*AXLE_SPAN - rX*WHEEL_SPAN, y: cy + fY*AXLE_SPAN - rY*WHEEL_SPAN }, // FL
+        { x: cx + fX*AXLE_SPAN + rX*WHEEL_SPAN, y: cy + fY*AXLE_SPAN + rY*WHEEL_SPAN }, // FR
+        { x: cx - fX*AXLE_SPAN - rX*WHEEL_SPAN, y: cy - fY*AXLE_SPAN - rY*WHEEL_SPAN }, // RL
+        { x: cx - fX*AXLE_SPAN + rX*WHEEL_SPAN, y: cy - fY*AXLE_SPAN + rY*WHEEL_SPAN }, // RR
+    ];
+}
+
+function emitParticles() {
+    if (currentSpeed < 0.3) return;
+    let w = wheelPositions();
+    let rate = floor(params.emitRate);
+    for (let wi = 0; wi < 4; wi++) {
+        for (let j = 0; j < rate; j++) {
+            if (particles.length < 1600) particles.push(new Poof(w[wi].x, w[wi].y, wi, currentSpeed));
+        }
+    }
+}
+
+// ── Vintage reel background (baked once per seed/color change) ────────
+
+function bakeBackground() {
+    bgBuffer = createGraphics(width, height);
+    let ctx = bgBuffer.drawingContext;
+    let g = ctx.createRadialGradient(width*0.5, height*0.42, 60, width*0.5, height*0.55, width*0.78);
+    g.addColorStop(0, colHex(bgLight));
+    g.addColorStop(1, colHex(bgDark));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, width, height);
+
+    // Film grain — seeded so it's stable (no flicker), drawn once.
+    bgBuffer.noStroke();
+    for (let i = 0; i < 26000; i++) {
+        let gx = random(width), gy = random(height);
+        let dark = random() < 0.5;
+        if (dark) bgBuffer.fill(40, 30, 18, random(6, 22));
+        else      bgBuffer.fill(255, 248, 225, random(5, 18));
+        let s = random(0.6, 1.8);
+        bgBuffer.ellipse(gx, gy, s, s);
+    }
+    // A few faint scratches / dust hairs
+    bgBuffer.stroke(40, 30, 18, 16);
+    for (let i = 0; i < 14; i++) {
+        let sx = random(width);
+        bgBuffer.strokeWeight(random(0.5, 1.3));
+        bgBuffer.line(sx, 0, sx + random(-20, 20), height);
+    }
+}
+
+function colHex(c) {
+    return 'rgb(' + floor(red(c)) + ',' + floor(green(c)) + ',' + floor(blue(c)) + ')';
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────
+
+function setup() {
+    let canvas = createCanvas(1200, 1200);
+    canvas.parent('canvas-container');
+    document.getElementById('loading-msg').style.display = 'none';
+    initializeSystem();
+}
+
+function rebuildColors() {
+    cloudCol  = color(params.cloud);
+    shadowCol = color(params.shadow);
+    inkCol    = color(params.ink);
+    let b = color(params.bg);
+    bgLight = color(min(255, red(b)+22), min(255, green(b)+18), min(255, blue(b)+12));
+    bgDark  = color(max(0, red(b)-78),  max(0, green(b)-74),   max(0, blue(b)-60));
+}
+
+function initializeSystem() {
+    randomSeed(params.seed);
+    noiseSeed(params.seed);
+    rebuildColors();
+    bakeBackground();
+
+    particles = [];
+    cx = width / 2; cy = height / 2;
+    headingAngle = random(TWO_PI);
+    noiseOffset  = random(100, 800);
+    currentSpeed = 0;
+
+    // Pre-run so the reel is already mid-scene when revealed.
+    for (let i = 0; i < 180; i++) {
+        updateFormation();
+        emitParticles();
+        let live = [];
+        for (let p of particles) { p.update(); if (p.alive) live.push(p); }
+        particles = live;
+    }
+
+    image(bgBuffer, 0, 0);
+}
+
+function draw() {
+    // Reclaim the frame with the sepia reel — high memory = clean cel,
+    // low memory = smeared dust storm.
+    let overlayA = map(params.trailFade, 2, 40, 26, 255);
+    push();
+    tint(255, overlayA);
+    image(bgBuffer, 0, 0);
+    pop();
+    noTint();
+
+    updateFormation();
+    emitParticles();
+
+    let live = [];
+    for (let p of particles) {
+        p.update();
+        if (p.alive) { p.display(); live.push(p); }
+    }
+    particles = live;
+}
+
+// ── UI handlers ──────────────────────────────────────────────────────
+
+function updateParam(name, value) {
+    params[name] = parseFloat(value);
+    let el = document.getElementById(name + '-value');
+    if (el) el.textContent = Number.isInteger(params[name]) ? params[name] : params[name].toFixed(1);
+    // Puffiness changes the lobe count used by NEW poofs; existing ones keep theirs.
+}
+
+function updateColor(which, value) {
+    params[which] = value;
+    document.getElementById(which + '-value').textContent = value;
+    rebuildColors();
+    bakeBackground(); // bg tone may have changed; rebake grain/vignette
+}
+
+function updateSeedDisplay() { document.getElementById('seed-input').value = params.seed; }
+function updateSeed() {
+    let v = parseInt(document.getElementById('seed-input').value);
+    if (v && v > 0) { params.seed = v; initializeSystem(); } else updateSeedDisplay();
+}
+function previousSeed() { params.seed = Math.max(1, params.seed - 1); updateSeedDisplay(); initializeSystem(); }
+function nextSeed() { params.seed += 1; updateSeedDisplay(); initializeSystem(); }
+function randomSeedAndUpdate() { params.seed = Math.floor(Math.random()*999999)+1; updateSeedDisplay(); initializeSystem(); }
+
+function resetParameters() {
+    params = { ...defaultParams };
+    const s = (id, v) => {
+        let el = document.getElementById(id); if (el) el.value = v;
+        let ve = document.getElementById(id + '-value');
+        if (ve) ve.textContent = Number.isInteger(v) ? v : v.toFixed(1);
+    };
+    s('speed', params.speed); s('emitRate', params.emitRate); s('particleLife', params.particleLife);
+    s('puffSize', params.puffSize); s('lobes', params.lobes); s('turbulence', params.turbulence);
+    s('outline', params.outline); s('trailFade', params.trailFade);
+    const c = (id, key) => {
+        document.getElementById(id).value = params[key];
+        document.getElementById(key + '-value').textContent = params[key];
+    };
+    c('cloudColor','cloud'); c('shadowColor','shadow'); c('inkColor','ink'); c('bgColor','bg');
+    updateSeedDisplay();
+    initializeSystem();
+}
+
+function doSave() { saveCanvas('inkwell-dust-' + params.seed, 'png'); }
+
+window.addEventListener('load', () => updateSeedDisplay());
+</script>
+</body>
+</html>
