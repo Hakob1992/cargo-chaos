@@ -52,6 +52,12 @@ export class Game {
         this.finishDelivery();
       }
     });
+    // Pause + mute (HUD buttons; also P/Esc and M on the keyboard).
+    this.paused = false;
+    this.hud.onPause(() => this.togglePause());
+    this.hud.onMute(() => this.toggleMute());
+    this.hud.setMuted(this.audio.muted);
+
     this.menu = new Menu(document.getElementById('ui-root'), this);
     this.customer = new Customer(document.getElementById('ui-root'));
 
@@ -127,6 +133,12 @@ export class Game {
     this.elapsed = 0;
     this.accumulator = 0;
     this.delivered = false;
+    this._failing = false;
+    this._failAt = 0;
+    this.styleScore = 0;
+    // Par time scales with the route length (≈11 m/s average pace). Beat it for
+    // the full time bonus; up to 2× par still scores something.
+    this.targetTime = (this.world.routeLength || 420) / 11;
     this.camRoll = 0;
     this.camShake = 0;
     this._prevTruckVY = 0;
@@ -138,11 +150,12 @@ export class Game {
     this.#snapCamera();
   }
 
-  finishDelivery() {
+  finishDelivery(failed = false) {
     if (this.state !== 'driving') return;
     this.state = 'result';
     this.audio.stopEngine();
-    this.audio.playReward();
+    // A wrecked load gets a thud, not a fanfare.
+    if (failed) this.audio.playImpact(1); else this.audio.playReward();
 
     const integrity = this.cargo.integrity;
     const rating = ratingFor(integrity);
@@ -151,8 +164,12 @@ export class Game {
     const payoutFrac = Math.max(rating.payout, floor);
     const earnings = Math.round(this.activeDelivery.reward * payoutFrac);
 
+    // Star rating from three inputs: condition, time vs par, and clean style.
+    const score = this.#computeStars(integrity, failed);
+
     this.save.addMoney(earnings);
     this.save.recordBest(this.activeDelivery.id, integrity);
+    if (!failed) this.save.recordStars(this.activeDelivery.id, score.stars);
 
     this.hud.hide();
     this.menu.showResult({
@@ -162,7 +179,26 @@ export class Game {
       earnings,
       time: this.elapsed,
       insured: floor > rating.payout,
+      failed,
+      failReason: failed ? this.cargo.failKind : null,
+      stars: score.stars,
+      breakdown: { condition: score.condition, time: score.time, style: score.style },
+      totalStars: this.save.totalStars(),
     });
+  }
+
+  // Map a finished run to 1–5 stars. condition (cargo intact) is weighted
+  // heaviest, time vs par next, clean drift/air style is the bonus that pushes a
+  // careful-and-fast run up to the full five. A failed (ruined) run is 1 star.
+  #computeStars(integrity, failed) {
+    if (failed) return { stars: 1, condition: 0, time: 0, style: 0 };
+    const condition = integrity / 100;
+    const time = THREE.MathUtils.clamp((2 * this.targetTime - this.elapsed) / this.targetTime, 0, 1);
+    const STYLE_MAX = 40; // points that count as a maxed-out flair run
+    const style = THREE.MathUtils.clamp(this.styleScore / STYLE_MAX, 0, 1);
+    const total = 0.5 * condition + 0.3 * time + 0.2 * style;
+    const stars = THREE.MathUtils.clamp(Math.round(1 + total * 4), 1, 5);
+    return { stars, condition, time, style };
   }
 
   abandonRun() {
@@ -178,6 +214,7 @@ export class Game {
   }
 
   #teardownRun() {
+    this.paused = false;
     this.audio.stopEngine();
     if (this.customer) this.customer.hide();
     if (this.particles) { this.particles.dispose(); this.particles = null; }
@@ -201,13 +238,36 @@ export class Game {
     const dt = Math.min(this.clock.getDelta(), 0.1);
     this.world.update(this.clock.elapsedTime);
 
-    if (this.state === 'driving') {
+    // Keyboard shortcuts: M mutes anytime; P / Esc toggles pause while driving.
+    if (this.input.consumeMute()) this.toggleMute();
+    if (this.input.consumePause()) this.togglePause();
+
+    if (this.state === 'driving' && !this.paused) {
       this.#fixedUpdate(dt);
       this.#updateRun(dt);
     }
 
     this.#updateCamera(dt);
     this.fx.render(this.clock.elapsedTime);
+  }
+
+  // Pause only matters mid-drive: freeze the sim and silence the engine.
+  togglePause() {
+    if (this.state !== 'driving') return;
+    this.paused = !this.paused;
+    this.hud.setPaused(this.paused);
+    if (this.paused) {
+      this.audio.stopEngine();
+    } else {
+      this.audio.startEngine();
+      // Drop any time accrued while paused so physics doesn't lurch on resume.
+      this.accumulator = 0;
+    }
+  }
+
+  toggleMute() {
+    this.audio.setMuted(!this.audio.muted);
+    this.hud.setMuted(this.audio.muted);
   }
 
   #fixedUpdate(dt) {
@@ -230,7 +290,11 @@ export class Game {
       // Impacts reported this step damage the cargo, scaled by force magnitude.
       this.physics.drainContactForces((a, b, magnitude) => {
         if (a === 'cargo' || b === 'cargo') {
+          const before = this.cargo.damage;
           this.cargo.registerImpact(magnitude);
+          // Style is "clean" flair only — a hit that actually hurts the cargo
+          // wipes most of the points you'd banked drifting/jumping into it.
+          if (this.cargo.damage > before + 0.5) this.styleScore = Math.max(0, this.styleScore * 0.5 - 5);
           // Jolt the camera + thump the speakers on a meaty cargo slam.
           this.addCamShake(Math.min(0.22, magnitude / 130000));
           this.audio.playImpact(Math.min(1, magnitude / 50000));
@@ -239,6 +303,25 @@ export class Game {
       });
       // Damage/age logic runs on the fixed step for frame-rate independence.
       this.cargo.update(FIXED);
+
+      // Style points: clean air time + sliding/drifting (mostly when traction
+      // breaks — mud, or a hard turn at speed). The grippy truck rarely slides on
+      // dry road, so a lower threshold keeps drift style attainable.
+      if (this.truck.airborne && this.truck.speedKmh > 15) this.styleScore += FIXED * 6;
+      const drift = this.truck.lateralSpeedKmh;
+      if (drift > 8 && this.truck.speedKmh > 18) this.styleScore += FIXED * Math.min(1, drift / 30) * 8;
+
+      // Leaving the road bounces the cargo over rough terrain. Accrue damage
+      // while any part of the truck is past the road edge, scaled by how far off
+      // and how fast you're going — a constant nudge to stay on the track.
+      const off = this.world.offRoadDistance(this.truck.position.x, this.truck.position.z);
+      this.offRoad = off > 0 && !this.cargo.broken && this.cargo.age > this.cargo.settleTime;
+      if (this.offRoad) {
+        const offFactor = Math.min(1, off / 6);
+        const speedFactor = 0.3 + 0.7 * Math.min(1, this.truck.speedKmh / 40);
+        this.cargo.addDamage((2 + 10 * offFactor) * speedFactor * FIXED);
+      }
+
       this.accumulator -= FIXED;
       steps++;
       this.elapsed += FIXED;
@@ -263,10 +346,32 @@ export class Game {
     this.customer.setClock(this.elapsed);
     if ((this.cargo.lastTilt ?? 0) > 0.75 && !this.cargo.broken) this.customer.onNearFall();
 
+    // Off-road feedback: warn the player, rumble the camera over rough ground,
+    // and make the passenger wince while the cargo is taking terrain damage.
+    this.hud.setOffRoad(this.offRoad);
+    if (this.offRoad) {
+      this.addCamShake(0.06 + 0.06 * Math.min(1, this.truck.speedKmh / 40));
+      if (!this.cargo.broken) this.customer.onNearFall();
+    }
+
+    // Cargo-personality warning (tipping fish tank, primed gas canister, …).
+    this.hud.setCargoWarn(this.cargo.warning);
+
     // R recovers the truck upright; bring the cargo back onto the bed with it.
     if (this.input.consumeReset()) {
       this.truck.recover();
       this.cargo.placeOnBed();
+    }
+
+    // Cargo ruined → the delivery has failed. Give the smash a beat to register
+    // on screen, then bounce to the (failed) result.
+    if (this.cargo.ruined && !this._failing) {
+      this._failing = true;
+      this._failAt = this.elapsed + 1.1;
+    }
+    if (this._failing && this.elapsed >= this._failAt) {
+      this.finishDelivery(true);
+      return;
     }
 
     // Reached the delivery pad? Surface the manual DELIVER button while on it,
@@ -277,7 +382,8 @@ export class Game {
 
     this.hud.update({
       time: this.elapsed,
-      damage: Math.round(this.cargo.damage),
+      integrity: this.cargo.integrity,
+      stage: this.cargo.stage,
       speed: Math.round(this.truck.speedKmh),
       gear: this.truck.gear,
     });

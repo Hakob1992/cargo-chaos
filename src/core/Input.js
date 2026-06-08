@@ -5,10 +5,17 @@ export class Input {
     this.keys = new Set();
     this.touch = { throttle: 0, steer: 0, brake: false };
     this.resetRequested = false;
+    this.pauseRequested = false;
+    this.muteRequested = false;
 
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code);
-      if (e.code === 'KeyR') this.resetRequested = true;
+      // Edge-triggered toggles — ignore auto-repeat so a held key fires once.
+      if (!e.repeat) {
+        if (e.code === 'KeyR') this.resetRequested = true;
+        if (e.code === 'KeyP' || e.code === 'Escape') this.pauseRequested = true;
+        if (e.code === 'KeyM') this.muteRequested = true;
+      }
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
         e.preventDefault();
       }
@@ -49,5 +56,17 @@ export class Input {
     const r = this.resetRequested;
     this.resetRequested = false;
     return r;
+  }
+
+  consumePause() {
+    const p = this.pauseRequested;
+    this.pauseRequested = false;
+    return p;
+  }
+
+  consumeMute() {
+    const m = this.muteRequested;
+    this.muteRequested = false;
+    return m;
   }
 }

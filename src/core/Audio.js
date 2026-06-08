@@ -10,7 +10,8 @@ export class AudioManager {
     this.ctx = null;
     this.master = null;
     this.engineOn = false;
-    this.muted = false;
+    // Remember the player's mute choice across sessions.
+    this.muted = localStorage.getItem('cargo_chaos_muted') === '1';
   }
 
   unlock() {
@@ -33,6 +34,7 @@ export class AudioManager {
   setMuted(m) {
     this.muted = m;
     if (this.master) this.master.gain.value = m ? 0 : 0.6;
+    try { localStorage.setItem('cargo_chaos_muted', m ? '1' : '0'); } catch (e) { /* ignore */ }
   }
 
   // ---- Engine (continuous) ----------------------------------------------

@@ -36,6 +36,7 @@ export class Menu {
           <div class="logo">CARGO <span>CHAOS</span><small>DELIVER IT, DON'T DESTROY IT!</small></div>
           <div class="header-right">
             <button class="reset-btn" data-reset>RESET PROGRESS</button>
+            <div class="stars-total">★ ${this.save.totalStars()}</div>
             <div class="money">$ ${this.save.money.toLocaleString()}</div>
           </div>
         </header>
@@ -124,19 +125,29 @@ export class Menu {
   #renderDeliveries() {
     const wrap = this.el.querySelector('.deliveries');
     wrap.innerHTML = '';
+    const total = this.save.totalStars();
     DELIVERIES.forEach((d) => {
-      const best = this.save.best[d.id];
+      const gate = d.starGate ?? 0;
+      const locked = total < gate;
+      const bestStars = this.save.bestStarsOf(d.id);
+      const starGlyphs = Array.from({ length: 5 }, (_, i) => i < bestStars ? '★' : '☆').join('');
       const card = document.createElement('button');
-      card.className = 'delivery-card';
+      card.className = 'delivery-card' + (locked ? ' locked' : '');
       card.style.setProperty('--cargo-color', '#' + d.color.toString(16).padStart(6, '0'));
       card.innerHTML = `
         <div class="swatch"></div>
         <div class="d-name">${d.name}</div>
         <div class="d-tag">${d.tag}</div>
         <div class="d-reward">$ ${d.reward.toLocaleString()}</div>
-        ${best != null ? `<div class="d-best">BEST ${best}%</div>` : ''}
+        ${locked
+          ? `<div class="d-lock">🔒 ★ ${gate} to unlock</div>`
+          : `<div class="d-stars">${starGlyphs}</div>`}
       `;
-      card.addEventListener('click', () => this.game.startDelivery(d));
+      if (locked) {
+        card.disabled = true;
+      } else {
+        card.addEventListener('click', () => this.game.startDelivery(d));
+      }
       wrap.appendChild(card);
     });
   }
@@ -190,23 +201,40 @@ export class Menu {
     });
   }
 
-  showResult({ delivery, integrity, rating, earnings, time, insured }) {
+  showResult({ delivery, integrity, rating, earnings, time, insured, failed = false, failReason = null,
+               stars = 1, breakdown = { condition: 0, time: 0, style: 0 }, totalStars = 0 }) {
     this.#disposeViewer();
     this.el.classList.remove('hidden');
     const cls = rating.toLowerCase();
+    const reasons = { shatter: 'SHATTERED', explode: 'EXPLODED', spill: 'SPILLED', escape: 'THEY ESCAPED!', collapse: 'COLLAPSED', crush: 'CRUSHED' };
+    const reasonLabel = failed && failReason && reasons[failReason] ? reasons[failReason] : null;
+    const prevBest = this.save.bestStarsOf(delivery.id);
+    const isNewBest = !failed && stars > prevBest;
+    // 5 star glyphs, filled up to `stars`, each animated in on a stagger.
+    const starRow = Array.from({ length: 5 }, (_, i) =>
+      `<span class="star ${i < stars ? 'on' : ''}" style="animation-delay:${i * 0.12}s">★</span>`).join('');
+    const meter = (label, frac) =>
+      `<div class="bd-row"><span>${label}</span><div class="bd-bar"><div class="bd-fill" style="width:${Math.round(frac * 100)}%"></div></div></div>`;
     this.el.innerHTML = `
       <div class="result-backdrop">
-        <div class="result-card rating-${cls}">
-          <div class="r-title">DELIVERY COMPLETE</div>
-          <div class="r-cargo">${delivery.name}</div>
+        <div class="result-card rating-${cls} ${failed ? 'is-failed' : ''}">
+          <div class="r-title">${failed ? 'DELIVERY FAILED' : 'DELIVERY COMPLETE'}</div>
+          <div class="r-cargo">${delivery.name}${reasonLabel ? ` — ${reasonLabel}` : ''}</div>
+          <div class="r-stars">${starRow}</div>
+          ${isNewBest ? '<div class="r-newbest">NEW BEST!</div>' : ''}
+          <div class="r-breakdown">
+            ${meter('Condition', breakdown.condition)}
+            ${meter('Time', breakdown.time)}
+            ${meter('Style', breakdown.style)}
+          </div>
           <div class="r-rating">${rating}</div>
           <div class="r-integrity">
             <div class="r-bar"><div class="r-fill" style="width:${integrity}%"></div></div>
-            <span>${integrity}% intact</span>
+            <span>${integrity}% intact · ${formatTime(time)}</span>
           </div>
           <div class="r-stats">
-            <div><span>Time</span><b>${formatTime(time)}</b></div>
             <div><span>Payout${insured ? ' (insured)' : ''}</span><b>$ ${earnings.toLocaleString()}</b></div>
+            <div><span>Total Stars</span><b>★ ${totalStars}</b></div>
           </div>
           <div class="r-money">Balance: $ ${this.save.money.toLocaleString()}</div>
           <div class="r-actions">

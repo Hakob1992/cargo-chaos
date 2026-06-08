@@ -281,6 +281,7 @@ export class World {
 
     this.deliveryPos = samples[N].clone();
     this.deliveryPos.y = this.terrainY(this.deliveryPos.x, this.deliveryPos.z);
+    this.routeLength = dist; // total centreline length (m) — used for par time
 
     this.#buildMud(samples, N);
   }
@@ -326,6 +327,19 @@ export class World {
       if (d < best) best = d;
     }
     return Math.sqrt(best);
+  }
+
+  // How far (in metres) a world position lies BEYOND the drivable road edge.
+  // Returns 0 while on the road (or within a small forgiveness margin) and grows
+  // as the truck strays into the rough terrain — used to damage fragile cargo.
+  // Parking on the delivery pad never counts as off-road.
+  offRoadDistance(x, z) {
+    if (this.deliveryPos) {
+      const pd = Math.hypot(x - this.deliveryPos.x, z - this.deliveryPos.z);
+      if (pd < 6) return 0;
+    }
+    const EDGE = 5.0; // widest half-width (~4.5) + a little grace for the wheels
+    return Math.max(0, this.#distToRoad(x, z) - EDGE);
   }
 
   // ---- Delivery pad --------------------------------------------------------

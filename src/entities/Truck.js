@@ -366,6 +366,23 @@ export class Truck {
     return 4;
   }
 
+  // All four wheels off the ground — used to reward air time (style scoring).
+  get airborne() {
+    for (let i = 0; i < 4; i++) if (this.controller.wheelIsInContact(i)) return false;
+    return true;
+  }
+
+  // Sideways velocity (km/h) — the body's lateral (local +X) speed component.
+  // High while sliding/drifting through a corner; ~0 when tracking straight.
+  get lateralSpeedKmh() {
+    const v = this.body.linvel();
+    const r = this.body.rotation();
+    // world-space right vector (body-local +X)
+    const rx = 1 - 2 * (r.y * r.y + r.z * r.z);
+    const rz = 2 * (r.x * r.z - r.y * r.w);
+    return Math.abs(v.x * rx + v.z * rz) * 3.6;
+  }
+
   reset() {
     this.body.setTranslation({ x: this.start.x, y: this.start.y, z: this.start.z }, true);
     this.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);

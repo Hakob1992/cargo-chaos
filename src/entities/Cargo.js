@@ -1,20 +1,60 @@
 import * as THREE from 'three';
 import { RAPIER } from '../core/Physics.js';
+import { resolveBehavior } from '../data/cargoTypes.js';
 
 // A single cargo item riding on the truck bed. Damage accrues from:
 //   - hard impacts (contact-force events, scaled by fragility)
 //   - tipping past a threshold angle (tall/heavy cargo)
 //   - falling off the truck / off the world
-// Optional "straps" (a spring joint to the chassis) keep it from sliding.
+// The "straps" upgrade raises bed friction so the cargo slides less.
 //
-// The WEDDING CAKE is special: it's built as a tiered cake that physically
-// WOBBLES (an acceleration-driven damped spring layered on top of the physics
-// body) and visibly sheds pieces as it takes damage — cherry, then a sliding
-// frosting tier, then the top layer, then collapse. Visual feedback > numbers.
+// DAMAGE STAGES (Phase 2): every cargo passes through three readable states —
+//   perfect → damaged → ruined — keyed off accumulated damage. Boxes crack and
+//   then crush; the WEDDING CAKE has its own richer staging (sheds cherry, then
+//   frosting, a tier, then collapses). Reaching `ruined` fails the delivery.
 const UP = new THREE.Vector3(0, 1, 0);
 // Resting Z of the cargo on the truck bed, in truck-local space (see notes in
 // the original build — the GLB bed is centred around z ≈ -0.9).
 const BED_Z = -0.95;
+
+// Damage thresholds (in damage %, where integrity = 100 − damage):
+const DAMAGED_AT = 12; // first visible damage stage (cracks appear)
+const RUINED_AT = 70;  // ruined → delivery fails (also forced when broken)
+
+// Lazily-baked cartoon "ink crack" overlay, shared by every box cargo. A handful
+// of jagged dark branches on a transparent canvas — mapped onto each box face.
+let _crackTex = null;
+function crackTexture() {
+  if (_crackTex) return _crackTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const x = c.getContext('2d');
+  x.strokeStyle = 'rgba(28,18,10,0.88)';
+  x.lineCap = 'round';
+  for (let n = 0; n < 5; n++) {
+    let px = 50 + Math.random() * 156, py = 50 + Math.random() * 156;
+    let ang = Math.random() * Math.PI * 2;
+    x.lineWidth = 3 + Math.random() * 3;
+    x.beginPath();
+    x.moveTo(px, py);
+    const segs = 4 + (Math.random() * 4 | 0);
+    for (let s = 0; s < segs; s++) {
+      ang += (Math.random() - 0.5) * 1.3;
+      const len = 12 + Math.random() * 26;
+      px += Math.cos(ang) * len; py += Math.sin(ang) * len;
+      x.lineTo(px, py);
+      if (Math.random() < 0.5) { // small branch
+        const ba = ang + (Math.random() - 0.5) * 1.7, bl = 8 + Math.random() * 16;
+        x.lineTo(px + Math.cos(ba) * bl, py + Math.sin(ba) * bl);
+        x.moveTo(px, py);
+      }
+    }
+    x.stroke();
+  }
+  _crackTex = new THREE.CanvasTexture(c);
+  _crackTex.colorSpace = THREE.SRGBColorSpace;
+  return _crackTex;
+}
 
 export class Cargo {
   constructor(scene, physics, delivery, truck) {
@@ -23,7 +63,15 @@ export class Cargo {
     this.world = physics.world;
     this.delivery = delivery;
     this.truck = truck;
-    this.isCake = delivery.id === 'cake';
+    // Phase 3 — the cargo's data-driven personality (see cargoTypes.js).
+    this.behavior = resolveBehavior(delivery.behavior);
+    this.isCake = this.behavior.render === 'cake';
+    this.hits = 0;             // distinct impacts past threshold (gas-canister fuse)
+    this._lastHitAt = -99;     // age of the last counted hit (debounce)
+    this.tipTime = 0;          // seconds spent tilted past tolerance
+    this.tipProgress = 0;      // 0..1 toward a "spill/escape" failure
+    this.armed = false;        // gas canister: one hit taken, primed to blow
+    this.failKind = null;      // how it died: shatter/explode/spill/escape/…
     this.damage = 0;           // 0..100
     this.broken = false;
     this.age = 0;              // seconds since spawn
@@ -56,26 +104,57 @@ export class Cargo {
     const desc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(spawn.x, spawn.y, spawn.z)
       .setRotation({ x: spawnQ.x, y: spawnQ.y, z: spawnQ.z, w: spawnQ.w })
-      .setLinearDamping(0.4)
-      .setAngularDamping(2.5)
+      // Minimal linear damping so cruising at constant speed doesn't drag the
+      // cargo into a phantom rearward drift — friction alone carries it with the
+      // truck. Lower angular damping lets it actually tip/roll in hard corners.
+      .setLinearDamping(0.05)
+      .setAngularDamping(0.8)
       .setCanSleep(false);
     this.body = this.world.createRigidBody(desc);
 
     const mass = delivery.mass;
     this.mass = mass;
     this.fragility = delivery.fragility;
-    this.impactThreshold = mass * 60;
+    // Behaviour scales how hard a knock has to be before it counts (lower = more
+    // fragile). Glass shatters at half the force a sturdy crate shrugs off.
+    this.impactThreshold = mass * 60 * this.behavior.impactScale;
 
+    // Phase 1 — the cargo rides LOOSE, held only by friction + the bed walls (no
+    // tether joint), so truck motion transfers through momentum: hard braking
+    // slides it into the cab, acceleration slides it to the tailgate, hard corners
+    // shove it to the outside, and a rollover can dump it out entirely.
+    //
+    // The Cargo Straps upgrade now raises this friction instead of adding a
+    // spring: more straps grip harder and slide less (40 = base tie-down …
+    // 220 = maxed). We use the Min combine rule so the EFFECTIVE coefficient is
+    // exactly this value (not averaged up by the 0.6 chassis / 0.8 walls), which
+    // — under this game's −20 gravity (doubled normal force) — keeps sliding
+    // readable: it breaks loose above roughly bedFriction × 20 m/s² of accel.
+    const strapVal = truck.tuning.straps ?? 40;
+    this.bedFriction = 0.35 + Math.min(1, (strapVal - 40) / 180) * 0.45; // 0.35..0.80
+
+    // Bottom-weight the cargo: lower its centre of mass toward the base so tall,
+    // narrow loads (e.g. glass panels: hz 0.14, CoM 0.8 high) stay upright under
+    // normal acceleration instead of toppling instantly, yet still tip in
+    // genuinely aggressive moves — Phase 3's upright tolerances judge the rest.
+    // Inertia uses the centroidal cuboid tensor (a fine gameplay approximation).
+    const comDrop = this.delivery.comDrop ?? 0; // 0 = geometric centre … 1 = base (per-cargo)
+    const com = { x: 0, y: -hy * comDrop, z: 0 };
+    const inertia = {
+      x: (mass / 3) * (hy * hy + hz * hz),
+      y: (mass / 3) * (hx * hx + hz * hz),
+      z: (mass / 3) * (hx * hx + hy * hy),
+    };
     const col = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
-      .setMass(mass)
-      .setFriction(0.9)
+      .setMassProperties(mass, com, inertia, { x: 0, y: 0, z: 0, w: 1 })
+      .setFriction(this.bedFriction)
+      .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
       .setRestitution(0.1)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(this.impactThreshold);
     this.physics.tag(this.world.createCollider(col, this.body), 'cargo');
 
     this.#buildMesh(hx, hy, hz);
-    this.#attachStraps();
   }
 
   // The mesh is a Group that follows the physics body (set in sync). Its child
@@ -102,6 +181,19 @@ export class Cargo {
     box.receiveShadow = true;
     this.visual.add(box);
     this.boxMesh = box;
+    // Damage-stage palette: lerp from the base colour toward a scuffed tone.
+    this._baseColor = new THREE.Color(this.delivery.color);
+    this._scuffColor = new THREE.Color(0x6b5a44);
+
+    // Crack overlay — a slightly larger shell wearing the ink-crack texture,
+    // hidden until the cargo reaches the `damaged` stage.
+    const crack = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 * 1.015, hy * 2 * 1.015, hz * 2 * 1.015),
+      new THREE.MeshBasicMaterial({ map: crackTexture(), transparent: true, depthWrite: false })
+    );
+    crack.visible = false;
+    box.add(crack);
+    this.crackMesh = crack;
 
     const strapMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.8 });
     for (const z of [-hz * 0.5, hz * 0.5]) {
@@ -158,36 +250,89 @@ export class Cargo {
     this.cakeAllParts = [this.tier1, this.tier2, this.tier3, this.cherry];
   }
 
-  #attachStraps() {
-    const strength = this.truck.tuning.straps;
-    const anchorTruck = { x: 0, y: this.bedFloor, z: BED_Z };
-    const anchorCargo = { x: 0, y: -this.halfH, z: 0 };
-    const stiffness = strength * 120;
-    const damping = strength * 8;
-    const params = RAPIER.JointData.spring(0.0, stiffness, damping, anchorTruck, anchorCargo);
-    this.joint = this.world.createImpulseJoint(params, this.truck.body, this.body, true);
+  // A short driver-facing warning for the HUD, or null when all's well.
+  get warning() {
+    if (this.broken) return null;
+    if (this.armed) return '⚠ PRESSURE CRITICAL — NO MORE HITS!';
+    if (this.behavior.mustStayUpright && this.tipProgress > 0.25) {
+      return this.behavior.failKind === 'escape' ? "⚠ STEADY — IT'S WAKING!" : '⚠ KEEP IT LEVEL!';
+    }
+    return null;
   }
 
   registerImpact(magnitude) {
     if (this.broken || this.age < this.settleTime) return;
     const over = magnitude - this.impactThreshold;
     if (over <= 0) return;
+    const b = this.behavior;
+
+    // Glass / eggs: one solid knock and it's gone.
+    if (b.instantFailOnImpact) { this.failBy(b.failKind || 'shatter'); return; }
+
+    // Pressurised: the first hit dents + primes it, the second detonates.
+    if (b.explodeOnSecondHit) {
+      // Debounce — one physical collision resolves over several solver steps,
+      // each firing an event; count that as ONE hit, not a dozen.
+      if (this.age - this._lastHitAt < 0.5) return;
+      this._lastHitAt = this.age;
+      this.hits += 1;
+      if (this.hits >= 2) { this.failBy(b.failKind || 'explode'); return; }
+      this.armed = true;
+      this.addDamage(Math.max(45 - this.damage, 0)); // jump to ~45% (visibly hurt)
+      return;
+    }
+
+    // Everyone else: damage proportional to the overshoot × fragility.
     const dmg = (over / this.mass) * this.fragility * 0.025;
     if (dmg > 0.1) this.addDamage(dmg);
   }
 
+  // Hard, behaviour-flavoured failure (shatter / explode / spill / escape …).
+  failBy(kind) {
+    if (this.broken) return;
+    this.failKind = kind;
+    this.damage = 100;
+    this.#ruin();
+  }
+
+  // Coarse condition stage every cargo type reports (drives the HUD + fail).
+  get stage() {
+    if (this.broken || this.damage >= RUINED_AT) return 'ruined';
+    if (this.damage >= DAMAGED_AT) return 'damaged';
+    return 'perfect';
+  }
+
+  get ruined() {
+    return this.stage === 'ruined';
+  }
+
   addDamage(amount) {
+    if (this.broken) return; // already ruined — no further accrual
     const before = this.damage;
     this.damage = Math.min(100, this.damage + amount);
-    if (this.isCake && this.damage !== before) this.#applyDamageStage();
-    if (this.damage >= 100 && !this.broken) this.#break();
+    if (this.damage === before) return;
+    this.#applyDamageStage();
+    if ((this.damage >= RUINED_AT || this.damage >= 100) && !this.broken) this.#ruin();
+  }
+
+  // Dispatch to the type-specific damage visual.
+  #applyDamageStage() {
+    if (this.isCake) this.#applyCakeStage();
+    else this.#applyBoxStage();
+  }
+
+  // Box stage: scuff/darken progressively, reveal cracks once damaged.
+  #applyBoxStage() {
+    if (!this.boxMesh) return;
+    if (this.damage >= DAMAGED_AT && this.crackMesh) this.crackMesh.visible = true;
+    const f = THREE.MathUtils.clamp((this.damage - DAMAGED_AT) / (RUINED_AT - DAMAGED_AT), 0, 1);
+    this.boxMesh.material.color.copy(this._baseColor).lerp(this._scuffColor, f * 0.7);
   }
 
   // Cake damage is shown by losing pieces, keyed to remaining integrity:
   //   ≤90 cherry falls · ≤70 frosting slides · ≤50 top tier gone · ≤20 disaster.
-  #applyDamageStage() {
+  #applyCakeStage() {
     const integ = this.integrity;
-    if (!this.isCake) return;
 
     // Cherry falls off at 90%.
     if (this.cherry) this.cherry.visible = integ > 90;
@@ -219,7 +364,8 @@ export class Cargo {
     }
   }
 
-  #break() {
+  // Ruined: the cargo is a write-off. Collapse/crush it visually and lock it.
+  #ruin() {
     this.broken = true;
     if (this.isCake) {
       // Total collapse: flatten and brown the whole thing.
@@ -232,9 +378,34 @@ export class Cargo {
         if (c.isMesh) c.material.color.set(0x5a4a30);
       });
     } else if (this.boxMesh) {
-      this.boxMesh.material.color.set(0x444444);
-      this.boxMesh.material.transparent = true;
-      this.boxMesh.material.opacity = 0.6;
+      // Box wreck visual depends on HOW it died.
+      const kind = this.failKind || this.behavior.failKind || 'crush';
+      if (this.crackMesh) this.crackMesh.visible = true;
+      switch (kind) {
+        case 'shatter': // collapse into a small dark heap of shards
+          this.visual.scale.set(0.9, 0.25, 0.9);
+          this.boxMesh.material.color.set(0x4a5560);
+          break;
+        case 'explode': // blown flat + scorched, debris spread wide
+          this.visual.scale.set(1.5, 0.2, 1.5);
+          this.boxMesh.material.color.set(0x201813);
+          this.visual.rotation.z = (Math.random() - 0.5) * 0.8;
+          break;
+        case 'spill': // emptied out — squat and darkened (water gone)
+          this.visual.scale.y = 0.5;
+          this.boxMesh.material.color.set(0x244a5a);
+          break;
+        case 'escape': // crate flung open and empty
+          this.visual.scale.set(1.05, 1.05, 1.05);
+          this.boxMesh.material.transparent = true;
+          this.boxMesh.material.opacity = 0.25;
+          this.boxMesh.material.color.set(0x6b5a44);
+          break;
+        default: // crush
+          this.boxMesh.material.color.set(0x3b3128);
+          this.visual.scale.y = 0.6;
+          this.visual.rotation.z = (Math.random() - 0.5) * 0.5;
+      }
     }
   }
 
@@ -282,6 +453,18 @@ export class Cargo {
     const tilt = this._localUp.angleTo(UP);
     this.lastTilt = tilt;
     if (tilt > 0.95) this.addDamage((tilt - 0.95) * 6 * dt);
+
+    // mustStayUpright: hold it past its lean tolerance and a timer runs down to
+    // a spill (fish tank) or escape (live animals); right it in time and recover.
+    const b = this.behavior;
+    if (b.mustStayUpright) {
+      const tol = (b.uprightToleranceDeg ?? 50) * Math.PI / 180;
+      const timeout = b.openTimeoutSec ?? 3;
+      if (tilt > tol) this.tipTime = Math.min(timeout, this.tipTime + dt);
+      else this.tipTime = Math.max(0, this.tipTime - dt * 0.6); // recovers if righted
+      this.tipProgress = this.tipTime / timeout;
+      if (this.tipTime >= timeout) { this.failBy(b.failKind || 'spill'); return; }
+    }
 
     // Fell off the bed / off the world.
     const truckPos = this.truck.position;
@@ -332,7 +515,6 @@ export class Cargo {
   }
 
   dispose() {
-    if (this.joint) this.world.removeImpulseJoint(this.joint, true);
     this.physics.remove(this.body);
     this.scene.remove(this.mesh);
     this.mesh.traverse((c) => {
