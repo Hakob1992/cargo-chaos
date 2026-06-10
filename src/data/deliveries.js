@@ -14,7 +14,13 @@ export const DELIVERIES = [
     reward: 350,
     mass: 60,
     fragility: 0.35,
-    size: [0.5, 0.45, 0.55],
+    // A teetering tower of boxes (CardboardBoxes.glb). Collider half-extents
+    // match the modelled stack: ~0.97 × 1.01 footprint, ~2.13 m tall. The tall
+    // CoM makes it tip in corners — `comDrop` is the steadiness knob (0 = max
+    // chaos / topples on hard launches … higher = bottom-weighted & steadier).
+    size: [0.487, 1.067, 0.504],
+    comDrop: 0.2,
+    model: 'CardboardBoxes.glb',
     color: 0xc8965a,
     behavior: 'standard',
   },
@@ -30,6 +36,7 @@ export const DELIVERIES = [
     // rides upright. Glass is meant to fail from IMPACTS, not from tipping.
     size: [0.55, 0.75, 0.3],
     comDrop: 0.4,
+    model: 'GlassPanels.glb',
     color: 0x8fd0e8,
     behavior: 'glass_vase',
   },
@@ -44,6 +51,7 @@ export const DELIVERIES = [
     fragility: 0.85,
     size: [0.55, 0.6, 0.5],
     comDrop: 0.25,
+    model: 'FishTank.glb',
     color: 0x4aa3d6,
     behavior: 'fish_tank',
   },
@@ -56,6 +64,7 @@ export const DELIVERIES = [
     mass: 90,
     fragility: 1.0,
     size: [0.5, 0.7, 0.55],
+    model: 'WeddingCake.glb',
     color: 0xf4c6d0,
     behavior: 'birthday_cake',
   },

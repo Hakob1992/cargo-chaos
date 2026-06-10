@@ -29,10 +29,18 @@ export const CARGO_BEHAVIORS = {
     failKind: 'crush',
   },
 
-  // Glass: survives careful driving but ANY solid knock shatters it outright.
+  // Glass: rides safely through normal (even aggressive) driving, but a genuine
+  // crash shatters it instantly. Because `instantFailOnImpact` kills it on the
+  // FIRST event past the threshold, that threshold (mass·60·impactScale) has to
+  // clear the forces a loose load makes slamming the bed walls in hard corners
+  // and hard stops — MEASURED up to ~25k for the 120 kg crate (settling spikes
+  // ~21k) — while still tripping on a real wreck (a 48 km/h head-on measured
+  // ~61k). 4.8 → ~35k for glass and scales with mass for the dino egg. A LOW
+  // value (the old 0.5 → 3.6k) re-introduces the "shatters the instant it even
+  // settles onto the bed" bug.
   glass_vase: {
     render: 'box',
-    impactScale: 0.5,          // breaks at half the usual force
+    impactScale: 4.8,
     instantFailOnImpact: true,
     failKind: 'shatter',
   },

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RAPIER } from '../core/Physics.js';
 import { resolveBehavior } from '../data/cargoTypes.js';
+import { BurstFX } from './BurstFX.js';
 
 // A single cargo item riding on the truck bed. Damage accrues from:
 //   - hard impacts (contact-force events, scaled by fragility)
@@ -91,6 +93,18 @@ export class Cargo {
     this.wVelX = 0; this.wVelZ = 0;        // angular velocities for the spring
     this._prevVel = { x: 0, y: 0, z: 0 };
     this._accel = new THREE.Vector3();
+
+    // Liquid state (set once a model with a "Water" node loads). The water
+    // surface sloshes — leans opposite to acceleration — and flings splash
+    // droplets when it sloshes or gets knocked hard.
+    this.waterMesh = null;     // the sloshing node inside the model
+    this.waterFX = null;       // splash particle system
+    this._fx = [];             // every BurstFX (splashes, shatter shards) to tick/dispose
+    this.sloshX = 0; this.sloshZ = 0;     // current water lean angles (rad)
+    this.sVelX = 0; this.sVelZ = 0;        // slosh spring velocities
+    this._splashCd = 0;        // cooldown between slosh-driven splashes
+    this._tmpVec = new THREE.Vector3();
+    this._tmpQ = new THREE.Quaternion();
 
     const [hx, hy, hz] = delivery.size;
     this.halfH = hy;
@@ -184,15 +198,20 @@ export class Cargo {
     // Damage-stage palette: lerp from the base colour toward a scuffed tone.
     this._baseColor = new THREE.Color(this.delivery.color);
     this._scuffColor = new THREE.Color(0x6b5a44);
+    // Materials the damage stages tint (each with its own base colour). The
+    // placeholder is the single box material; a loaded GLB swaps in its own
+    // cloned materials so multiple cargo of the same type never share tint.
+    this._tintTargets = [{ mat: box.material, base: this._baseColor.clone() }];
 
     // Crack overlay — a slightly larger shell wearing the ink-crack texture,
-    // hidden until the cargo reaches the `damaged` stage.
+    // hidden until the cargo reaches the `damaged` stage. Parented to `visual`
+    // (not the box) so it survives a swap to a GLB model.
     const crack = new THREE.Mesh(
       new THREE.BoxGeometry(hx * 2 * 1.015, hy * 2 * 1.015, hz * 2 * 1.015),
       new THREE.MeshBasicMaterial({ map: crackTexture(), transparent: true, depthWrite: false })
     );
     crack.visible = false;
-    box.add(crack);
+    this.visual.add(crack);
     this.crackMesh = crack;
 
     const strapMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.8 });
@@ -201,6 +220,69 @@ export class Cargo {
       band.position.z = z;
       box.add(band);
     }
+
+    // If this delivery ships a custom model, load it and replace the placeholder.
+    if (this.delivery.model) this.#loadBoxModel(this.delivery.model, hx, hy, hz);
+  }
+
+  // Swap the placeholder box for a glTF model authored to the collider size.
+  // Async (like the truck's Car1.glb): the placeholder shows until this resolves.
+  #loadBoxModel(file, hx, hy, hz) {
+    new GLTFLoader().load(
+      `./${file}`,
+      (gltf) => {
+        if (this._disposed) return;
+        const model = gltf.scene;
+        // Centre on the body origin and fit to the collider box. The model is
+        // authored to spec, so the height-match scale lands near 1 and keeps
+        // proportions intact.
+        const bbox = new THREE.Box3().setFromObject(model);
+        const size = bbox.getSize(new THREE.Vector3());
+        const center = bbox.getCenter(new THREE.Vector3());
+        const s = (hy * 2) / (size.y || 1);
+        model.scale.setScalar(s);
+        model.position.set(-center.x * s, -center.y * s, -center.z * s);
+
+        const tints = [];
+        let water = null;
+        model.traverse((c) => {
+          if (!c.isMesh) return;
+          c.castShadow = true;
+          c.receiveShadow = true;
+          c.matrixAutoUpdate = true;
+          c.material = c.material.clone(); // per-instance, so damage tint is isolated
+          // glTF carries the glass panes' sub-1 opacity, but three only marks a
+          // material transparent for BLEND alpha mode — enable it for any < 1.
+          if (c.material.opacity < 1) c.material.transparent = true;
+          tints.push({ mat: c.material, base: c.material.color.clone() });
+          // A node named "Water" is the sloshing liquid surface.
+          if (/water/i.test(c.name)) water = c;
+        });
+
+        // Liquid cargo: hook up sloshing + splash droplets.
+        if (water) {
+          this.waterMesh = water;
+          water.matrixAutoUpdate = true;
+          this.waterFX = new BurstFX(this.scene, { color: this.delivery.color });
+          this._fx.push(this.waterFX);
+        }
+
+        // Drop the placeholder box (its straps are children and go with it).
+        if (this.boxMesh) {
+          this.visual.remove(this.boxMesh);
+          this.boxMesh.geometry.dispose();
+          this.boxMesh.material.dispose();
+          this.boxMesh = null;
+        }
+        this.visual.add(model);
+        this.modelMesh = model;
+        if (tints.length) this._tintTargets = tints;
+        // Re-apply the current damage stage onto the freshly loaded materials.
+        if (this.damage > 0 && !this.broken) this.#applyBoxStage();
+      },
+      undefined,
+      (err) => console.warn(`Cargo: ${file} failed to load — using placeholder box.`, err)
+    );
   }
 
   // A 3-tier wedding cake centred in the collider box (half-extents hx,hy,hz).
@@ -248,6 +330,66 @@ export class Cargo {
     this.visual.add(this.cherry);
 
     this.cakeAllParts = [this.tier1, this.tier2, this.tier3, this.cherry];
+
+    // Swap the procedural cake for a modelled one (if provided). The model must
+    // expose Tier1/2/3, Frost1/2/3 and Cherry nodes so the staging keeps working.
+    if (this.delivery.model) this.#loadCakeModel(this.delivery.model, hx, hy, hz);
+  }
+
+  // Map a glTF wedding cake's named nodes onto this.tier1/2/3 / _frostRing /
+  // cherry so every existing cake-damage stage drives the model instead of the
+  // procedural cylinders. Async; the procedural cake shows until this resolves.
+  #loadCakeModel(file, hx, hy, hz) {
+    new GLTFLoader().load(
+      `./${file}`,
+      (gltf) => {
+        if (this._disposed) return;
+        const model = gltf.scene;
+        const bbox = new THREE.Box3().setFromObject(model);
+        const size = bbox.getSize(new THREE.Vector3());
+        const center = bbox.getCenter(new THREE.Vector3());
+        const s = (hy * 2) / (size.y || 1);
+        model.scale.setScalar(s);
+        model.position.set(-center.x * s, -center.y * s, -center.z * s);
+
+        const byName = {};
+        model.traverse((c) => {
+          if (!c.isMesh) return;
+          c.castShadow = true; c.receiveShadow = true; c.matrixAutoUpdate = true;
+          c.material = c.material.clone(); // isolate per-part so browning/slide don't bleed
+          byName[c.name] = c;
+        });
+        const t1 = byName.Tier1, t2 = byName.Tier2, t3 = byName.Tier3, cherry = byName.Cherry;
+        if (!(t1 && t2 && t3 && cherry)) {
+          console.warn(`Cargo: ${file} is missing Tier/Cherry nodes — keeping procedural cake.`);
+          return;
+        }
+
+        // Drop the procedural placeholder cake.
+        for (const p of this.cakeAllParts) {
+          this.visual.remove(p);
+          p.traverse((c) => { if (c.isMesh) { c.geometry.dispose(); c.material.dispose(); } });
+        }
+
+        // Re-parent each frosting ring under its tier (attach preserves world
+        // transform) so it tilts/squishes with the tier during the collapse.
+        const linkFrost = (tier, ring) => { if (ring) { tier.attach(ring); tier._frostRing = ring; } };
+        linkFrost(t1, byName.Frost1);
+        linkFrost(t2, byName.Frost2);
+        linkFrost(t3, byName.Frost3);
+
+        this.tier1 = t1; this.tier2 = t2; this.tier3 = t3; this.cherry = cherry;
+        this.cakeAllParts = [t1, t2, t3, cherry];
+        this.visual.add(model);
+        this.modelMesh = model;
+
+        // Catch the model up to any damage already taken before it loaded.
+        if (this.broken) this.#ruin();
+        else if (this.damage > 0) this.#applyCakeStage();
+      },
+      undefined,
+      (err) => console.warn(`Cargo: ${file} failed to load — using procedural cake.`, err)
+    );
   }
 
   // A short driver-facing warning for the HUD, or null when all's well.
@@ -265,6 +407,12 @@ export class Cargo {
     const over = magnitude - this.impactThreshold;
     if (over <= 0) return;
     const b = this.behavior;
+
+    // Liquid cargo: any solid knock throws a splash, scaled by how hard.
+    if (this.waterFX) {
+      const intensity = THREE.MathUtils.clamp(over / (this.impactThreshold * 1.5), 0.35, 1);
+      this.#emitSplash(Math.round(8 + intensity * 16), intensity);
+    }
 
     // Glass / eggs: one solid knock and it's gone.
     if (b.instantFailOnImpact) { this.failBy(b.failKind || 'shatter'); return; }
@@ -321,12 +469,13 @@ export class Cargo {
     else this.#applyBoxStage();
   }
 
-  // Box stage: scuff/darken progressively, reveal cracks once damaged.
+  // Box stage: scuff/darken progressively, reveal cracks once damaged. Works on
+  // the placeholder's single material or every material of a loaded GLB.
   #applyBoxStage() {
-    if (!this.boxMesh) return;
+    if (!this._tintTargets) return;
     if (this.damage >= DAMAGED_AT && this.crackMesh) this.crackMesh.visible = true;
     const f = THREE.MathUtils.clamp((this.damage - DAMAGED_AT) / (RUINED_AT - DAMAGED_AT), 0, 1);
-    this.boxMesh.material.color.copy(this._baseColor).lerp(this._scuffColor, f * 0.7);
+    for (const t of this._tintTargets) t.mat.color.copy(t.base).lerp(this._scuffColor, f * 0.7);
   }
 
   // Cake damage is shown by losing pieces, keyed to remaining integrity:
@@ -377,32 +526,36 @@ export class Cargo {
       this.visual.traverse((c) => {
         if (c.isMesh) c.material.color.set(0x5a4a30);
       });
-    } else if (this.boxMesh) {
-      // Box wreck visual depends on HOW it died.
+    } else if (this._tintTargets && this._tintTargets.length) {
+      // Box wreck visual depends on HOW it died. `paint` recolours every tinted
+      // material (placeholder box OR all of a loaded GLB's parts).
       const kind = this.failKind || this.behavior.failKind || 'crush';
       if (this.crackMesh) this.crackMesh.visible = true;
+      const paint = (hex) => { for (const t of this._tintTargets) t.mat.color.set(hex); };
       switch (kind) {
-        case 'shatter': // collapse into a small dark heap of shards
+        case 'shatter': // collapse into a small dark heap + fling glass shards
           this.visual.scale.set(0.9, 0.25, 0.9);
-          this.boxMesh.material.color.set(0x4a5560);
+          paint(0x4a5560);
+          this.#emitShards();
           break;
         case 'explode': // blown flat + scorched, debris spread wide
           this.visual.scale.set(1.5, 0.2, 1.5);
-          this.boxMesh.material.color.set(0x201813);
+          paint(0x201813);
           this.visual.rotation.z = (Math.random() - 0.5) * 0.8;
           break;
         case 'spill': // emptied out — squat and darkened (water gone)
           this.visual.scale.y = 0.5;
-          this.boxMesh.material.color.set(0x244a5a);
+          paint(0x244a5a);
+          if (this.waterMesh) this.waterMesh.visible = false; // it all sloshed out
+          this.#emitSplash(36, 1); // a final big gush
           break;
         case 'escape': // crate flung open and empty
           this.visual.scale.set(1.05, 1.05, 1.05);
-          this.boxMesh.material.transparent = true;
-          this.boxMesh.material.opacity = 0.25;
-          this.boxMesh.material.color.set(0x6b5a44);
+          for (const t of this._tintTargets) { t.mat.transparent = true; t.mat.opacity = 0.25; }
+          paint(0x6b5a44);
           break;
         default: // crush
-          this.boxMesh.material.color.set(0x3b3128);
+          paint(0x3b3128);
           this.visual.scale.y = 0.6;
           this.visual.rotation.z = (Math.random() - 0.5) * 0.5;
       }
@@ -436,6 +589,8 @@ export class Cargo {
     }
     // Apply the wobble lean to the visual child (cake only).
     if (this.isCake) this.visual.rotation.set(this.wobbleX, 0, this.wobbleZ);
+    // Tilt just the water surface for the slosh (the glass tank stays rigid).
+    if (this.waterMesh) this.waterMesh.rotation.set(this.sloshX, 0, this.sloshZ);
   }
 
   // Damage / age / wobble logic — runs on the fixed physics step.
@@ -445,6 +600,8 @@ export class Cargo {
     const r = this.body.rotation();
 
     if (this.isCake) this.#updateWobble(dt, r);
+    if (this.waterMesh) this.#updateSlosh(dt, r);
+    for (const fx of this._fx) fx.update(dt); // droplets/shards keep arcing even when broken
 
     if (this.broken || this.age < this.settleTime) return;
 
@@ -472,29 +629,91 @@ export class Cargo {
     if (t.y < -3 || horiz > 6) this.addDamage(100);
   }
 
+  // Body-local horizontal acceleration (x = lateral, z = forward), from the
+  // change in linear velocity this step. Shared by the cake wobble and the
+  // water slosh. Mutates `this._accel` and returns it.
+  #computeBodyAccel(dt, r) {
+    const v = this.body.linvel();
+    this._accel.set((v.x - this._prevVel.x) / dt, 0, (v.z - this._prevVel.z) / dt);
+    this._prevVel.x = v.x; this._prevVel.y = v.y; this._prevVel.z = v.z;
+    this._q.set(r.x, r.y, r.z, r.w).conjugate(); // world accel → body-local
+    return this._accel.applyQuaternion(this._q);
+  }
+
   // Damped-spring lean driven by the cargo body's acceleration, expressed in the
   // body-local frame so it leans back under throttle and sideways in turns.
   #updateWobble(dt, r) {
-    const v = this.body.linvel();
-    this._accel.set(
-      (v.x - this._prevVel.x) / dt,
-      0,
-      (v.z - this._prevVel.z) / dt
-    );
-    this._prevVel.x = v.x; this._prevVel.y = v.y; this._prevVel.z = v.z;
-    // World accel → body-local (conjugate of the body rotation).
-    this._q.set(r.x, r.y, r.z, r.w).conjugate();
-    this._accel.applyQuaternion(this._q);
-
+    const a = this.#computeBodyAccel(dt, r);
     const K = 0.018, MAX = 0.4;
-    const targetX = THREE.MathUtils.clamp(-this._accel.z * K, -MAX, MAX); // pitch from fwd accel
-    const targetZ = THREE.MathUtils.clamp(this._accel.x * K, -MAX, MAX);  // roll from lateral accel
-
+    const targetX = THREE.MathUtils.clamp(-a.z * K, -MAX, MAX); // pitch from fwd accel
+    const targetZ = THREE.MathUtils.clamp(a.x * K, -MAX, MAX);  // roll from lateral accel
     const k = 140, damp = 13;
     this.wVelX += ((targetX - this.wobbleX) * k - this.wVelX * damp) * dt;
     this.wobbleX += this.wVelX * dt;
     this.wVelZ += ((targetZ - this.wobbleZ) * k - this.wVelZ * damp) * dt;
     this.wobbleZ += this.wVelZ * dt;
+  }
+
+  // Water slosh: a softer, slower spring than the cake (water keeps moving after
+  // the truck stops). Big slosh swings fling splash droplets out of the tank.
+  #updateSlosh(dt, r) {
+    const a = this.#computeBodyAccel(dt, r);
+    const K = 0.05, MAX = 0.13; // ~7.5° max lean — clears the glass walls
+    const targetX = THREE.MathUtils.clamp(-a.z * K, -MAX, MAX);
+    const targetZ = THREE.MathUtils.clamp(a.x * K, -MAX, MAX);
+    const k = 55, damp = 7; // low stiffness + light damping = lingering slosh
+    this.sVelX += ((targetX - this.sloshX) * k - this.sVelX * damp) * dt;
+    this.sloshX += this.sVelX * dt;
+    this.sVelZ += ((targetZ - this.sloshZ) * k - this.sVelZ * damp) * dt;
+    this.sloshZ += this.sVelZ * dt;
+    // Hard-clamp the lean so a spring overshoot never pokes water through glass.
+    const CAP = 0.12; // ~6.9°, inside the modelled clearance
+    this.sloshX = THREE.MathUtils.clamp(this.sloshX, -CAP, CAP);
+    this.sloshZ = THREE.MathUtils.clamp(this.sloshZ, -CAP, CAP);
+
+    // Splash over the rim only on a genuinely hard slosh, throttled.
+    this._splashCd -= dt;
+    const sloshSpeed = Math.hypot(this.sVelX, this.sVelZ);
+    if (this._splashCd <= 0 && sloshSpeed > 1.8 && !this.broken) {
+      this._splashCd = 0.1;
+      const intensity = THREE.MathUtils.clamp((sloshSpeed - 1.8) / 3, 0.2, 1);
+      this.#emitSplash(Math.round(2 + intensity * 6), intensity);
+    }
+  }
+
+  // Fling droplets from the waterline. `carry` is how much of the body's own
+  // velocity the droplets inherit (so they trail the moving truck).
+  #emitSplash(count, intensity, carry = 0.6) {
+    if (!this.waterFX) return;
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this._tmpQ.set(r.x, r.y, r.z, r.w);
+    // Waterline, in cargo-local space (model centred on the body origin).
+    const pos = this._tmpVec.set(
+      (Math.random() - 0.5) * this.halfH * 0.9,
+      this.halfH * 0.66,
+      (Math.random() - 0.5) * this.halfH * 0.9,
+    ).applyQuaternion(this._tmpQ).add(new THREE.Vector3(t.x, t.y, t.z));
+    const v = this.body.linvel();
+    const baseVel = new THREE.Vector3(v.x * carry, Math.max(0, v.y) * carry, v.z * carry);
+    this.waterFX.burst(pos, baseVel, count, intensity);
+  }
+
+  // One-shot burst of tumbling glass shards when the cargo shatters. The FX is
+  // created on demand (only shattering cargo pays for it) and ticked/disposed
+  // through `this._fx` like the splashes.
+  #emitShards() {
+    const fx = new BurstFX(this.scene, {
+      color: this.delivery.color, opacity: 0.85, roughness: 0.1, max: 48, spin: true,
+      geometry: new THREE.TetrahedronGeometry(0.08, 0),
+      upSpeed: [1.0, 3.5], spread: 3.2, lifeRange: [0.5, 1.0],
+    });
+    this._fx.push(fx);
+    const t = this.body.translation();
+    const center = this._tmpVec.set(t.x, t.y + this.halfH * 0.3, t.z);
+    const v = this.body.linvel();
+    const baseVel = new THREE.Vector3(v.x * 0.4, 0, v.z * 0.4);
+    fx.burst(center, baseVel, 40, 1);
   }
 
   placeOnBed() {
@@ -515,6 +734,9 @@ export class Cargo {
   }
 
   dispose() {
+    this._disposed = true; // a still-in-flight model load will no-op on resolve
+    for (const fx of this._fx) fx.dispose();
+    this._fx = []; this.waterFX = null;
     this.physics.remove(this.body);
     this.scene.remove(this.mesh);
     this.mesh.traverse((c) => {
