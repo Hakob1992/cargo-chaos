@@ -8,7 +8,7 @@ export class BurstFX {
     this.scene = scene;
     const {
       color = 0x4aa3d6, opacity = 0.9, roughness = 0.25, max = 80,
-      gravity = -18, spin = false,
+      gravity = -18, spin = false, doubleSide = false,
       geometry = new THREE.IcosahedronGeometry(0.05, 0),
       upSpeed = [1.6, 4.0], spread = 2.4, lifeRange = [0.45, 0.9],
     } = opts;
@@ -21,6 +21,7 @@ export class BurstFX {
     const mat = new THREE.MeshStandardMaterial({
       color, roughness, metalness: 0.0,
       transparent: opacity < 1, opacity,
+      side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
     });
     this.mesh = new THREE.InstancedMesh(geometry, mat, max);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

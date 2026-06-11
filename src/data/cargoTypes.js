@@ -27,6 +27,7 @@ export const CARGO_BEHAVIORS = {
     uprightToleranceDeg: null,
     openTimeoutSec: null,
     failKind: 'crush',
+    idleShuffle: false, // true = the crate shuffles on its own (live cargo)
   },
 
   // Glass: rides safely through normal (even aggressive) driving, but a genuine
@@ -63,6 +64,7 @@ export const CARGO_BEHAVIORS = {
     uprightToleranceDeg: 55,
     openTimeoutSec: 4,
     failKind: 'escape',
+    idleShuffle: true, // the crate visibly shuffles/clucks at random while alive
   },
 
   // Soft cake: squishes through visible stages, no hard fail trigger.

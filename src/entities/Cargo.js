@@ -23,6 +23,28 @@ const BED_Z = -0.95;
 const DAMAGED_AT = 12; // first visible damage stage (cracks appear)
 const RUINED_AT = 70;  // ruined → delivery fails (also forced when broken)
 
+// ---- Cartoon-reaction tunables ---------------------------------------------
+// Squash-and-stretch when the cargo thumps down after air time:
+const SQUASH_MIN_DVY = 3.5;   // upward velocity jump (m/s) that counts as a landing
+const SQUASH_DVY_RANGE = 9;   // dvy above the min that maps to a FULL squash
+const SQUASH_DECAY = 0.002;   // per-second retention — relaxes in ~0.2s
+const SQUASH_Y = 0.38;        // max vertical squash (fraction of height)
+const SQUASH_XZ = 0.26;       // max horizontal stretch to conserve "volume"
+// Nervous shiver while the cargo skates across the bed:
+const SLIDE_MIN = 0.6;        // relative slide speed (m/s) where shiver starts
+const SLIDE_RANGE = 2.5;      // slide speed above min that maps to full shiver
+const SLIDE_JITTER = 0.05;    // shiver amplitude (rad)
+const SHIVER_HZ = 34;         // shiver oscillation speed
+// Idle character:
+const ARMED_TREMBLE = 0.045;  // primed gas canister rattles visibly (rad)
+const IDLE_PULSE_SEC = 0.35;  // length of one live-animal shuffle pulse
+const IDLE_MIN_SEC = 1.6;     // min gap between idle shuffles
+const IDLE_VAR_SEC = 2.6;     // extra random gap
+const IDLE_AMP = 0.05;        // shuffle amplitude (rad)
+// Type particle FX:
+const STEAM_INTERVAL = 0.12;  // seconds between steam puffs while armed
+const FEATHER_TIP_INTERVAL = 0.22; // feather trickle while the crate tips
+
 // Lazily-baked cartoon "ink crack" overlay, shared by every box cargo. A handful
 // of jagged dark branches on a transparent canvas — mapped onto each box face.
 let _crackTex = null;
@@ -105,6 +127,18 @@ export class Cargo {
     this._splashCd = 0;        // cooldown between slosh-driven splashes
     this._tmpVec = new THREE.Vector3();
     this._tmpQ = new THREE.Quaternion();
+
+    // Cartoon-reaction state: landing squash, slide shiver, idle character.
+    this.squash = 0;           // 0..1 — current squash-and-stretch amount
+    this.slideAmount = 0;      // 0..1 — how hard the cargo is sliding (Game reads this)
+    this._prevVy = 0;          // vertical velocity last step (landing detection)
+    this._shiverX = 0; this._shiverZ = 0;
+    this._shiverPhase = 0;
+    this._idleTimer = IDLE_MIN_SEC; // next live-animal shuffle
+    this._idlePulse = 0;       // 1 → 0 during a shuffle pulse
+    this._steamCd = 0;         // armed-canister steam emission cooldown
+    this._featherCd = 0;       // feather trickle cooldown while tipping
+    this._fxByKey = {};        // lazily-created per-type BurstFX systems
 
     const [hx, hy, hz] = delivery.size;
     this.halfH = hy;
@@ -413,6 +447,11 @@ export class Cargo {
       const intensity = THREE.MathUtils.clamp(over / (this.impactThreshold * 1.5), 0.35, 1);
       this.#emitSplash(Math.round(8 + intensity * 16), intensity);
     }
+    // Live animals: a knock startles them — a puff of feathers escapes.
+    if (b.failKind === 'escape') {
+      const intensity = THREE.MathUtils.clamp(over / (this.impactThreshold * 1.5), 0.3, 1);
+      this.#emitFeathers(Math.round(4 + intensity * 6), intensity);
+    }
 
     // Glass / eggs: one solid knock and it's gone.
     if (b.instantFailOnImpact) { this.failBy(b.failKind || 'shatter'); return; }
@@ -426,6 +465,7 @@ export class Cargo {
       this.hits += 1;
       if (this.hits >= 2) { this.failBy(b.failKind || 'explode'); return; }
       this.armed = true;
+      this.#emitSteam(8, 1); // pressure-release burst the moment it's primed
       this.addDamage(Math.max(45 - this.damage, 0)); // jump to ~45% (visibly hurt)
       return;
     }
@@ -483,12 +523,17 @@ export class Cargo {
   #applyCakeStage() {
     const integ = this.integrity;
 
-    // Cherry falls off at 90%.
+    // Cherry falls off at 90% (with a little frosting pop as it goes).
     if (this.cherry) this.cherry.visible = integ > 90;
+    if (integ <= 90 && !this._fxCherryPop) {
+      this._fxCherryPop = true;
+      this.#emitFrosting(6, 0.5);
+    }
 
     // Frosting slides at 70%: shove the rings sideways and tint them.
     if (integ <= 70 && !this._frostSlid) {
       this._frostSlid = true;
+      this.#emitFrosting(10, 0.7);
       for (const tier of [this.tier1, this.tier2, this.tier3]) {
         if (tier && tier._frostRing) {
           tier._frostRing.position.x += 0.06;
@@ -499,10 +544,15 @@ export class Cargo {
 
     // Top tier gone at 50%.
     if (this.tier3) this.tier3.visible = integ > 50;
+    if (integ <= 50 && !this._fxTierPop) {
+      this._fxTierPop = true;
+      this.#emitFrosting(14, 0.9);
+    }
 
     // Disaster at 20%: second tier slumps and everything browns.
     if (integ <= 20 && !this._disaster) {
       this._disaster = true;
+      this.#emitFrosting(18, 1);
       if (this.tier2) {
         this.tier2.rotation.z = 0.5;
         this.tier2.position.x += 0.12;
@@ -517,7 +567,8 @@ export class Cargo {
   #ruin() {
     this.broken = true;
     if (this.isCake) {
-      // Total collapse: flatten and brown the whole thing.
+      // Total collapse: flatten and brown the whole thing, frosting everywhere.
+      this.#emitFrosting(24, 1);
       this._disaster = true;
       if (this.tier3) this.tier3.visible = false;
       if (this.cherry) this.cherry.visible = false;
@@ -549,10 +600,11 @@ export class Cargo {
           if (this.waterMesh) this.waterMesh.visible = false; // it all sloshed out
           this.#emitSplash(36, 1); // a final big gush
           break;
-        case 'escape': // crate flung open and empty
+        case 'escape': // crate flung open and empty — feathers EVERYWHERE
           this.visual.scale.set(1.05, 1.05, 1.05);
           for (const t of this._tintTargets) { t.mat.transparent = true; t.mat.opacity = 0.25; }
           paint(0x6b5a44);
+          this.#emitFeathers(28, 1);
           break;
         default: // crush
           paint(0x3b3128);
@@ -587,8 +639,18 @@ export class Cargo {
       this.mesh.position.set(t.x, t.y, t.z);
       this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
     }
-    // Apply the wobble lean to the visual child (cake only).
-    if (this.isCake) this.visual.rotation.set(this.wobbleX, 0, this.wobbleZ);
+    // Cartoon pose on the visual child: wobble lean (cake) + shiver jitter
+    // (sliding / idle shuffle / armed tremble) + landing squash-and-stretch.
+    // Skipped once broken — the wreck pose owns the visual transform then.
+    if (!this.broken) {
+      this.visual.rotation.set(
+        (this.isCake ? this.wobbleX : 0) + this._shiverX,
+        0,
+        (this.isCake ? this.wobbleZ : 0) + this._shiverZ
+      );
+      const sq = this.squash;
+      this.visual.scale.set(1 + sq * SQUASH_XZ, 1 - sq * SQUASH_Y, 1 + sq * SQUASH_XZ);
+    }
     // Tilt just the water surface for the slosh (the glass tank stays rigid).
     if (this.waterMesh) this.waterMesh.rotation.set(this.sloshX, 0, this.sloshZ);
   }
@@ -603,7 +665,58 @@ export class Cargo {
     if (this.waterMesh) this.#updateSlosh(dt, r);
     for (const fx of this._fx) fx.update(dt); // droplets/shards keep arcing even when broken
 
+    // --- Cartoon reactions (run even during settle so the load-in thump reads) -
+    // Landing squash: a sharp upward velocity jump after falling = a thump.
+    const vy = this.body.linvel().y;
+    const dvy = vy - this._prevVy;
+    if (dvy > SQUASH_MIN_DVY && this._prevVy < -2) {
+      this.squash = Math.min(1, Math.max(this.squash, (dvy - SQUASH_MIN_DVY) / SQUASH_DVY_RANGE));
+    }
+    this._prevVy = vy;
+    this.squash *= Math.pow(SQUASH_DECAY, dt);
+
+    // Slide amount: the cargo's horizontal speed relative to the truck.
+    const cv = this.body.linvel();
+    const tv = this.truck.body.linvel();
+    this.slideSpeed = Math.hypot(cv.x - tv.x, cv.z - tv.z);
+    this.slideAmount = THREE.MathUtils.clamp((this.slideSpeed - SLIDE_MIN) / SLIDE_RANGE, 0, 1);
+
+    // Shiver: nervous jitter from sliding, idle shuffles, or a primed canister.
+    let tremble = this.armed && !this.broken ? ARMED_TREMBLE : 0;
+    if (this._idlePulse > 0) {
+      tremble = Math.max(tremble, this._idlePulse * IDLE_AMP);
+      this._idlePulse -= dt / IDLE_PULSE_SEC;
+    }
+    const jitter = this.broken ? 0 : this.slideAmount * SLIDE_JITTER + tremble;
+    if (jitter > 0.0005) {
+      this._shiverPhase += dt * SHIVER_HZ;
+      this._shiverX = Math.sin(this._shiverPhase * 1.13) * jitter;
+      this._shiverZ = Math.sin(this._shiverPhase) * jitter;
+    } else {
+      this._shiverX = this._shiverZ = 0;
+    }
+
     if (this.broken || this.age < this.settleTime) return;
+
+    // --- Idle character + type FX (only while alive and settled) --------------
+    const bb = this.behavior;
+    // Live animals shuffle around inside the crate every few seconds.
+    if (bb.idleShuffle) {
+      this._idleTimer -= dt;
+      if (this._idleTimer <= 0) {
+        this._idleTimer = IDLE_MIN_SEC + Math.random() * IDLE_VAR_SEC;
+        this._idlePulse = 1;
+        this.#emitFeathers(2, 0.3);
+      }
+    }
+    // A primed canister hisses a steady stream of steam.
+    if (this.armed) {
+      this._steamCd -= dt;
+      if (this._steamCd <= 0) {
+        this._steamCd = STEAM_INTERVAL;
+        this.#emitSteam(1, 0.5);
+      }
+    }
 
     // Tipping past ~55° does gentle damage.
     this._localUp.copy(UP).applyQuaternion(this._q.set(r.x, r.y, r.z, r.w));
@@ -620,6 +733,14 @@ export class Cargo {
       if (tilt > tol) this.tipTime = Math.min(timeout, this.tipTime + dt);
       else this.tipTime = Math.max(0, this.tipTime - dt * 0.6); // recovers if righted
       this.tipProgress = this.tipTime / timeout;
+      // Feathers squeeze out of a tipping animal crate as panic builds.
+      if (b.failKind === 'escape' && this.tipProgress > 0.3) {
+        this._featherCd -= dt;
+        if (this._featherCd <= 0) {
+          this._featherCd = FEATHER_TIP_INTERVAL;
+          this.#emitFeathers(2, 0.3 + this.tipProgress * 0.7);
+        }
+      }
       if (this.tipTime >= timeout) { this.failBy(b.failKind || 'spill'); return; }
     }
 
@@ -681,22 +802,71 @@ export class Cargo {
     }
   }
 
-  // Fling droplets from the waterline. `carry` is how much of the body's own
-  // velocity the droplets inherit (so they trail the moving truck).
-  #emitSplash(count, intensity, carry = 0.6) {
-    if (!this.waterFX) return;
+  // Lazily create (and cache) a per-type particle system. Only cargo that
+  // actually uses an effect pays for it; all are ticked/disposed via `_fx`.
+  #getFX(key, opts) {
+    if (!this._fxByKey[key]) {
+      const fx = new BurstFX(this.scene, opts);
+      this._fxByKey[key] = fx;
+      this._fx.push(fx);
+    }
+    return this._fxByKey[key];
+  }
+
+  // Emit a burst from the cargo at `yFrac` of its half-height (1 = top).
+  // `carry` is how much of the body's own velocity the bits inherit, so they
+  // trail the moving truck instead of being left behind.
+  #emitBurst(fx, count, intensity, yFrac = 0.6, carry = 0.5) {
     const t = this.body.translation();
     const r = this.body.rotation();
     this._tmpQ.set(r.x, r.y, r.z, r.w);
-    // Waterline, in cargo-local space (model centred on the body origin).
     const pos = this._tmpVec.set(
-      (Math.random() - 0.5) * this.halfH * 0.9,
-      this.halfH * 0.66,
-      (Math.random() - 0.5) * this.halfH * 0.9,
+      (Math.random() - 0.5) * this.halfH * 0.7,
+      this.halfH * yFrac,
+      (Math.random() - 0.5) * this.halfH * 0.7,
     ).applyQuaternion(this._tmpQ).add(new THREE.Vector3(t.x, t.y, t.z));
     const v = this.body.linvel();
     const baseVel = new THREE.Vector3(v.x * carry, Math.max(0, v.y) * carry, v.z * carry);
-    this.waterFX.burst(pos, baseVel, count, intensity);
+    fx.burst(pos, baseVel, count, intensity);
+  }
+
+  // Fling droplets from the waterline (liquid cargo only).
+  #emitSplash(count, intensity, carry = 0.6) {
+    if (!this.waterFX) return;
+    this.#emitBurst(this.waterFX, count, intensity, 0.66, carry);
+  }
+
+  // Pink frosting blobs whenever the cake loses a piece.
+  #emitFrosting(count, intensity) {
+    if (!this.isCake) return;
+    const fx = this.#getFX('frosting', {
+      color: this.delivery.color, opacity: 0.95, roughness: 0.5, max: 40,
+      geometry: new THREE.IcosahedronGeometry(0.06, 0),
+      upSpeed: [1.4, 3.4], spread: 2.0, lifeRange: [0.5, 0.95],
+    });
+    this.#emitBurst(fx, count, intensity, 0.8);
+  }
+
+  // Fluttering feathers for live-animal crates (slow fall, tumbling planes).
+  #emitFeathers(count, intensity) {
+    const fx = this.#getFX('feathers', {
+      color: 0xf7f3e8, opacity: 0.95, roughness: 0.9, max: 36,
+      spin: true, doubleSide: true, gravity: -3.5,
+      geometry: new THREE.PlaneGeometry(0.15, 0.06),
+      upSpeed: [0.9, 2.4], spread: 1.6, lifeRange: [0.9, 1.7],
+    });
+    this.#emitBurst(fx, count, intensity, 0.9, 0.6);
+  }
+
+  // Thin steam puffs hissing from a primed gas canister.
+  #emitSteam(count, intensity) {
+    const fx = this.#getFX('steam', {
+      color: 0xd8dee2, opacity: 0.65, roughness: 1.0, max: 30,
+      gravity: 2.5, // steam rises
+      geometry: new THREE.IcosahedronGeometry(0.05, 0),
+      upSpeed: [0.7, 1.5], spread: 0.5, lifeRange: [0.5, 0.9],
+    });
+    this.#emitBurst(fx, count, intensity, 1.0, 0.8);
   }
 
   // One-shot burst of tumbling glass shards when the cargo shatters. The FX is
