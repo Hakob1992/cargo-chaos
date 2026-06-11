@@ -32,6 +32,11 @@ const SHAKE_ON_DAMAGED = 0.16;
 const SHAKE_ON_RUINED = 0.4;
 // Cargo squash level that triggers the landing-thunk sound:
 const THUNK_SQUASH_EDGE = 0.3;
+// Near-miss "phew": a scare registers past these, relief fires once it calms.
+const PHEW_SCARE_TIP = 0.55;  // tipProgress that counts as a scare
+const PHEW_SCARE_TILT = 0.9;  // tilt (rad) that counts as a scare
+const PHEW_CALM_TIP = 0.15;   // recovered below this …
+const PHEW_CALM_TILT = 0.4;   // … and this → phew!
 
 export class Game {
   constructor() {
@@ -162,6 +167,8 @@ export class Game {
     this.hitstop = 0;
     this.slowmo = 0;
     this._lastStage = 'perfect';
+    this._prevSquash = 0;
+    this._scared = false;
     this.state = 'driving';
     this.menu.hide();
     this.hud.show(delivery);
@@ -415,6 +422,19 @@ export class Game {
       this.cargo.cluckPending = false;
       this.audio.playCluck();
     }
+
+    // Near-miss relief: the cargo nearly went over but recovered → "PHEW!".
+    const tip = this.cargo.tipProgress ?? 0;
+    const tilt = this.cargo.lastTilt ?? 0;
+    if (!this.cargo.broken && (tip > PHEW_SCARE_TIP || tilt > PHEW_SCARE_TILT)) {
+      this._scared = true;
+    } else if (this._scared && !this.cargo.broken
+        && tip < PHEW_CALM_TIP && tilt < PHEW_CALM_TILT) {
+      this._scared = false;
+      this.audio.playPhew();
+      this.hud.flashPhew();
+    }
+    if (this.cargo.broken) this._scared = false;
 
     // Customer reacts: panic when the cargo leans dangerously (≈ >43°).
     this.customer.setClock(this.elapsed);

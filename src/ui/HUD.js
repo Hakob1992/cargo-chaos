@@ -35,6 +35,7 @@ export class HUD {
 
       <div class="hud-warning hidden" data-warning>⚠ OFF ROAD — CARGO AT RISK!</div>
       <div class="hud-warning cargo-warning hidden" data-cargo-warn></div>
+      <div class="hud-phew hidden" data-phew>😅 PHEW!</div>
 
       <div class="touch-controls">
         <div class="dpad">
@@ -58,6 +59,8 @@ export class HUD {
     this.gearEl = this.el.querySelector('[data-gear]');
     this.warningEl = this.el.querySelector('[data-warning]');
     this.cargoWarnEl = this.el.querySelector('[data-cargo-warn]');
+    this.phewEl = this.el.querySelector('[data-phew]');
+    this._phewTimer = null;
     this.pauseBtn = this.el.querySelector('[data-pause]');
     this.muteBtn = this.el.querySelector('[data-mute]');
     this.pauseIcon = this.el.querySelector('[data-pause-icon]');
@@ -124,6 +127,16 @@ export class HUD {
     this.warningEl.classList.toggle('hidden', !off);
   }
 
+  // Near-miss relief: a quick "PHEW!" flash after the cargo almost went over.
+  flashPhew() {
+    if (!this.phewEl) return;
+    clearTimeout(this._phewTimer);
+    this.phewEl.classList.remove('hidden', 'pop');
+    void this.phewEl.offsetWidth; // restart the CSS animation
+    this.phewEl.classList.add('pop');
+    this._phewTimer = setTimeout(() => this.phewEl.classList.add('hidden'), 1400);
+  }
+
   // Cargo-personality warning (tipping tank, primed canister, …) or null.
   setCargoWarn(msg) {
     if (!this.cargoWarnEl) return;
@@ -137,6 +150,7 @@ export class HUD {
     this.setOffRoad(false);
     this.setCargoWarn(null);
     this.setPaused(false);
+    if (this.phewEl) this.phewEl.classList.add('hidden');
     this.el.classList.remove('hidden');
   }
 

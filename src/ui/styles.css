@@ -113,6 +113,22 @@ html, body {
 /* Cargo-personality warning sits just below the off-road banner, amber-toned. */
 .hud-warning.cargo-warning { top: 116px; background: #e08a16; }
 
+/* Near-miss relief flash — pops in, hangs a beat, fades. */
+.hud-phew {
+  position: absolute; top: 160px; left: 50%; transform: translateX(-50%);
+  font-family: var(--font-display); font-size: 26px; letter-spacing: 2px;
+  color: #2bd06e; text-shadow: 0 2px 0 rgba(0,0,0,0.45);
+  pointer-events: none;
+}
+.hud-phew.pop { animation: phewPop 1.4s ease forwards; }
+@keyframes phewPop {
+  0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+  12% { transform: translateX(-50%) scale(1.15); opacity: 1; }
+  22% { transform: translateX(-50%) scale(1); }
+  75% { opacity: 1; }
+  100% { transform: translateX(-50%) scale(1) translateY(-14px); opacity: 0; }
+}
+
 /* Top-right round "button sticker" cluster: pause + mute. */
 .hud-buttons {
   position: absolute; top: 18px; right: 18px;
@@ -310,9 +326,18 @@ html, body {
   background: rgba(8, 8, 12, 0.72); backdrop-filter: blur(3px); }
 .result-card { background: var(--panel); border: 1px solid rgba(255,255,255,0.1);
   border-radius: 18px; padding: 28px 30px; width: 380px; text-align: center;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  animation: cardIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes cardIn { from { transform: scale(0.82); opacity: 0; } }
 .r-title { color: var(--muted); letter-spacing: 3px; font-size: 13px; }
-.result-card.is-failed { border-color: rgba(214, 67, 31, 0.7); box-shadow: 0 20px 60px rgba(120, 20, 10, 0.55); }
+.result-card.is-failed { border-color: rgba(214, 67, 31, 0.7); box-shadow: 0 20px 60px rgba(120, 20, 10, 0.55);
+  /* Failed card drops in crooked — a comedic thud to match the wreck. */
+  animation: cardInFail 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes cardInFail {
+  0% { transform: translateY(-60px) rotate(-5deg); opacity: 0; }
+  55% { transform: translateY(8px) rotate(2.5deg); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
 .result-card.is-failed .r-title {
   font-family: var(--font-display); color: #ff5a3c; font-size: 22px; letter-spacing: 2px;
 }
@@ -339,10 +364,24 @@ html, body {
 .r-stars .star {
   font-size: 40px; line-height: 1; color: #3a3a4a;
   transform: scale(0.4); opacity: 0;
-  animation: starIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  animation: starIn 0.32s ease forwards;
 }
-.r-stars .star.on { color: var(--accent); text-shadow: 0 0 14px rgba(255, 176, 34, 0.6); }
+.r-stars .star.on {
+  color: var(--accent); text-shadow: 0 0 14px rgba(255, 176, 34, 0.6);
+  /* Lit stars SLAM down from above one at a time (delays set inline). */
+  transform: scale(2.6);
+  animation: starSlam 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
 @keyframes starIn { to { transform: scale(1); opacity: 1; } }
+@keyframes starSlam {
+  0% { transform: scale(2.6); opacity: 0; }
+  60% { transform: scale(0.9); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+/* Payout pops once the count-up settles. */
+.r-stats b[data-payout] { display: inline-block; }
+.r-stats b.payout-done { animation: payoutPop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes payoutPop { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }
 .r-newbest {
   font-family: var(--font-display); color: var(--green); letter-spacing: 2px;
   font-size: 15px; margin-bottom: 8px; animation: starIn 0.4s ease 0.6s backwards;

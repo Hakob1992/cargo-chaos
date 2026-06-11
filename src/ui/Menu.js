@@ -4,6 +4,12 @@ import { VEHICLES } from '../data/vehicles.js';
 import { formatTime } from './HUD.js';
 import { VehicleViewer } from './VehicleViewer.js';
 
+// ---- Result-screen feel tunables --------------------------------------------
+const STAR_FIRST_DELAY_MS = 250; // pause before the first star slams in
+const STAR_STAGGER_MS = 250;     // gap between star slams (matches the CSS delays)
+const PAYOUT_COUNT_MS = 900;     // payout count-up duration
+const PAYOUT_TICK_MS = 45;       // min gap between count-up tick sounds
+
 // Garage / delivery-select screen and the post-run result card.
 export class Menu {
   constructor(root, game) {
@@ -210,9 +216,15 @@ export class Menu {
     const reasonLabel = failed && failReason && reasons[failReason] ? reasons[failReason] : null;
     const prevBest = this.save.bestStarsOf(delivery.id);
     const isNewBest = !failed && stars > prevBest;
-    // 5 star glyphs, filled up to `stars`, each animated in on a stagger.
-    const starRow = Array.from({ length: 5 }, (_, i) =>
-      `<span class="star ${i < stars ? 'on' : ''}" style="animation-delay:${i * 0.12}s">★</span>`).join('');
+    // 5 star glyphs. Lit stars SLAM in one at a time on a dramatic stagger
+    // (each with a rising note, scheduled below); unlit ones fade in quietly.
+    const starRow = Array.from({ length: 5 }, (_, i) => {
+      const lit = i < stars;
+      const delay = lit
+        ? (STAR_FIRST_DELAY_MS + i * STAR_STAGGER_MS) / 1000
+        : 0.1;
+      return `<span class="star ${lit ? 'on' : ''}" style="animation-delay:${delay}s">★</span>`;
+    }).join('');
     const meter = (label, frac) =>
       `<div class="bd-row"><span>${label}</span><div class="bd-bar"><div class="bd-fill" style="width:${Math.round(frac * 100)}%"></div></div></div>`;
     this.el.innerHTML = `
@@ -233,7 +245,7 @@ export class Menu {
             <span>${integrity}% intact · ${formatTime(time)}</span>
           </div>
           <div class="r-stats">
-            <div><span>Payout${insured ? ' (insured)' : ''}</span><b>$ ${earnings.toLocaleString()}</b></div>
+            <div><span>Payout${insured ? ' (insured)' : ''}</span><b data-payout>$ 0</b></div>
             <div><span>Total Stars</span><b>★ ${totalStars}</b></div>
           </div>
           <div class="r-money">Balance: $ ${this.save.money.toLocaleString()}</div>
@@ -246,5 +258,36 @@ export class Menu {
     `;
     this.el.querySelector('[data-garage]').addEventListener('click', () => this.game.returnToGarage());
     this.el.querySelector('[data-retry]').addEventListener('click', () => this.game.startDelivery(delivery));
+
+    // One rising note per lit star, timed to the CSS slam stagger.
+    for (let i = 0; i < stars; i++) {
+      setTimeout(() => this.game.audio.playStar(i), STAR_FIRST_DELAY_MS + i * STAR_STAGGER_MS);
+    }
+
+    // Payout counts up (eased) with tiny rising ticks, starting once the
+    // stars have finished landing.
+    const payoutEl = this.el.querySelector('[data-payout]');
+    const startAfter = STAR_FIRST_DELAY_MS + stars * STAR_STAGGER_MS;
+    setTimeout(() => {
+      if (!payoutEl.isConnected) return; // screen already re-rendered
+      const t0 = performance.now();
+      let lastTick = 0;
+      const tick = (now) => {
+        if (!payoutEl.isConnected) return;
+        const f = Math.min(1, (now - t0) / PAYOUT_COUNT_MS);
+        const eased = 1 - Math.pow(1 - f, 3);
+        payoutEl.textContent = '$ ' + Math.round(earnings * eased).toLocaleString();
+        if (f < 1) {
+          if (now - lastTick > PAYOUT_TICK_MS && earnings > 0) {
+            this.game.audio.playTick(f);
+            lastTick = now;
+          }
+          requestAnimationFrame(tick);
+        } else {
+          payoutEl.classList.add('payout-done'); // little settling pop
+        }
+      };
+      requestAnimationFrame(tick);
+    }, startAfter);
   }
 }
