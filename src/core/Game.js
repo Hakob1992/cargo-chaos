@@ -18,6 +18,19 @@ import { VintageFX } from './VintageFX.js';
 const FIXED = 1 / 60;
 const UP = new THREE.Vector3(0, 1, 0);
 
+// ---- Game-feel tunables (impact juice) -------------------------------------
+// Hitstop: a brief full freeze of the sim so big hits "land". Kept tiny — long
+// freezes read as lag, not impact.
+const HITSTOP_BREAK_SEC = 0.18;     // freeze when the cargo is ruined/breaks
+const HITSTOP_BIGHIT_SEC = 0.07;    // freeze on a hard (but survivable) slam
+const HITSTOP_BIGHIT_FORCE = 45000; // contact force that counts as a "big hit"
+// Slow-mo beat when the cargo crosses a damage stage (perfect → damaged):
+const SLOWMO_STAGE_SEC = 0.5;       // real-time duration of the beat
+const SLOWMO_STAGE_SCALE = 0.35;    // sim speed during the beat
+// Camera shake on damage-stage transitions (on top of per-impact shake):
+const SHAKE_ON_DAMAGED = 0.16;
+const SHAKE_ON_RUINED = 0.4;
+
 export class Game {
   constructor() {
     this.save = new SaveData();
@@ -142,6 +155,11 @@ export class Game {
     this.camRoll = 0;
     this.camShake = 0;
     this._prevTruckVY = 0;
+    // Impact-juice state: pending freeze-frame / slow-mo beat, and the last seen
+    // damage stage so transitions (perfect → damaged → ruined) can be felt.
+    this.hitstop = 0;
+    this.slowmo = 0;
+    this._lastStage = 'perfect';
     this.state = 'driving';
     this.menu.hide();
     this.hud.show(delivery);
@@ -243,8 +261,20 @@ export class Game {
     if (this.input.consumePause()) this.togglePause();
 
     if (this.state === 'driving' && !this.paused) {
-      this.#fixedUpdate(dt);
-      this.#updateRun(dt);
+      if (this.hitstop > 0) {
+        // Freeze-frame: hold the whole sim for a beat so the hit registers.
+        // The camera keeps easing (below) so it reads as impact, not a hang.
+        this.hitstop -= dt;
+      } else {
+        // Slow-mo beat: run the sim at a fraction of real time briefly.
+        let scale = 1;
+        if (this.slowmo > 0) {
+          this.slowmo -= dt;
+          scale = SLOWMO_STAGE_SCALE;
+        }
+        this.#fixedUpdate(dt * scale);
+        this.#updateRun(dt * scale);
+      }
     }
 
     this.#updateCamera(dt);
@@ -299,10 +329,30 @@ export class Game {
           this.addCamShake(Math.min(0.22, magnitude / 130000));
           this.audio.playImpact(Math.min(1, magnitude / 50000));
           this.customer.onBump();
+          // A truly hard slam earns a blink of freeze-frame even if it survives.
+          if (magnitude > HITSTOP_BIGHIT_FORCE) {
+            this.hitstop = Math.max(this.hitstop, HITSTOP_BIGHIT_SEC);
+          }
         }
       });
       // Damage/age logic runs on the fixed step for frame-rate independence.
       this.cargo.update(FIXED);
+
+      // Damage-stage transitions get a felt beat: a slow-mo moment when the
+      // cargo first cracks, a hard freeze + shake the instant it's ruined.
+      const stage = this.cargo.stage;
+      if (stage !== this._lastStage) {
+        if (stage === 'ruined') {
+          this.hitstop = Math.max(this.hitstop, HITSTOP_BREAK_SEC);
+          this.addCamShake(SHAKE_ON_RUINED);
+        } else if (stage === 'damaged') {
+          this.slowmo = Math.max(this.slowmo, SLOWMO_STAGE_SEC);
+          this.addCamShake(SHAKE_ON_DAMAGED);
+        }
+        this._lastStage = stage;
+      }
+      // A freeze-frame fired mid-loop: stop stepping this frame so it lands NOW.
+      if (this.hitstop > 0) break;
 
       // Style points: clean air time + sliding/drifting (mostly when traction
       // breaks — mud, or a hard turn at speed). The grippy truck rarely slides on
