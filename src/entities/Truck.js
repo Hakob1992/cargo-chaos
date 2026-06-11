@@ -12,6 +12,21 @@ const CONN_Y = 0.1;    // wheel mount height above chassis centre (gives ground 
 const CHASSIS_MASS = 300; // kg — heavier than any cargo, for stability
 const MAX_STEER = 0.55;
 
+// ---- Body-feel tunables (visual-only lean/bounce on the cab model) ---------
+// The physics chassis stays untouched; the GLB model inside the group leans
+// and bounces on top of it for cartoon body language.
+const LEAN_ROLL_MAX = 0.085;   // max roll into a turn (rad)
+const LEAN_PITCH_MAX = 0.06;   // max pitch under throttle/brake (rad)
+const LEAN_PITCH_PER_ACCEL = 0.012; // pitch per m/s² of longitudinal accel
+const LEAN_SPRING_K = 60;      // lean spring stiffness
+const LEAN_SPRING_DAMP = 9;    // lean spring damping
+const BOUNCE_MIN_FALL = 2.0;   // fall speed (m/s) that earns a landing bounce
+const BOUNCE_KICK = 0.18;      // bounce velocity impulse per m/s of fall past the min
+const BOUNCE_KICK_MAX = 1.0;   // cap on a single landing's kick
+const BOUNCE_MAX = 0.14;       // clamp on the visual bounce offset (m)
+const BOUNCE_SPRING_K = 60;    // bounce spring stiffness (softer = fatter bounce)
+const BOUNCE_SPRING_DAMP = 7;  // bounce spring damping
+
 export class Truck {
   constructor(scene, physics, startPos, tuning) {
     this.scene = scene;
@@ -20,6 +35,17 @@ export class Truck {
     this.tuning = tuning;
     this.start = startPos.clone();
     this.steerAngle = 0;
+
+    // Visual body-feel springs (lean into turns, pitch under throttle/brake,
+    // bounce on landings) — applied to the cab model only, never the physics.
+    this._leanRoll = 0; this._leanRollV = 0;
+    this._leanPitch = 0; this._leanPitchV = 0;
+    this._bounce = 0; this._bounceV = 0;
+    this._prevVy = 0;
+    this._prevSignedSpeed = 0;
+    // Last control inputs, read by WheelParticles for launch/skid dust.
+    this.lastThrottle = 0;
+    this.lastBrake = false;
 
     // Interpolation state: prev/curr body transforms saved around physics steps.
     this._prevT = null;
@@ -112,6 +138,10 @@ export class Truck {
 
   #buildMesh() {
     this.group = new THREE.Group();
+    // The cab model + placeholders live inside this wrapper so the body-feel
+    // lean/bounce can pose them without fighting the physics-driven group.
+    this.bodyVisual = new THREE.Group();
+    this.group.add(this.bodyVisual);
     const bodyMat = new THREE.MeshStandardMaterial({ color: this.tuning.color ?? 0x3a78c2, roughness: 0.6, metalness: 0.2 });
     const darkMat = new THREE.MeshStandardMaterial({ color: 0x222228, roughness: 0.7 });
 
@@ -120,14 +150,14 @@ export class Truck {
     const base = new THREE.Mesh(new THREE.BoxGeometry(CHASSIS.hx * 2, CHASSIS.hy * 2, CHASSIS.hz * 2), bodyMat);
     base.castShadow = true;
     this._placeholders = [base];
-    this.group.add(base);
+    this.bodyVisual.add(base);
 
     // Cab over the front third.
     const cab = new THREE.Mesh(new THREE.BoxGeometry(CHASSIS.hx * 1.9, 0.7, 1.1), bodyMat);
     cab.position.set(0, CHASSIS.hy + 0.35, CHASSIS.hz - 0.7);
     cab.castShadow = true;
     this._placeholders.push(cab);
-    this.group.add(cab);
+    this.bodyVisual.add(cab);
 
     const glass = new THREE.Mesh(
       new THREE.BoxGeometry(CHASSIS.hx * 1.7, 0.4, 0.1),
@@ -135,7 +165,7 @@ export class Truck {
     );
     glass.position.set(0, CHASSIS.hy + 0.45, CHASSIS.hz - 0.15);
     this._placeholders.push(glass);
-    this.group.add(glass);
+    this.bodyVisual.add(glass);
 
     // Bed rim (visual to match the colliders).
     const mkRim = (x, y, z, w, h, d) => {
@@ -143,7 +173,7 @@ export class Truck {
       m.position.set(x, y, z);
       m.castShadow = true;
       this._placeholders.push(m);
-      this.group.add(m);
+      this.bodyVisual.add(m);
     };
     mkRim(0, CHASSIS.hy + 0.2, -CHASSIS.hz + 0.1, CHASSIS.hx * 2, 0.4, 0.2);
     mkRim(-CHASSIS.hx + 0.1, CHASSIS.hy + 0.2, 0.4, 0.2, 0.4, (CHASSIS.hz - 0.4) * 2);
@@ -164,8 +194,8 @@ export class Truck {
     // --- Load Car1.glb and replace placeholder when ready ---
     const loader = new GLTFLoader();
     loader.load('./Car1.glb', (gltf) => {
-      // Remove all placeholder children from the group.
-      for (const ph of this._placeholders) this.group.remove(ph);
+      // Remove all placeholder children from the body-visual wrapper.
+      for (const ph of this._placeholders) this.bodyVisual.remove(ph);
       this._placeholders = [];
 
       const model = gltf.scene;
@@ -226,7 +256,7 @@ export class Truck {
         .filter(Boolean).forEach(activateMatrix);
 
 
-      this.group.add(model);
+      this.bodyVisual.add(model);
       this._glbModel = model;
 
       // Hide placeholder wheels — the GLB has its own wheels baked in.
@@ -292,6 +322,39 @@ export class Truck {
     const fwdZ = 1 - 2 * (this._tmpQ.x * this._tmpQ.x + this._tmpQ.y * this._tmpQ.y);
     const signedSpeed = v.x * fwdX + v.z * fwdZ; // positive = driving forward
     this._rollAngle = (this._rollAngle ?? 0) + (signedSpeed / WHEEL_RADIUS) * dt;
+
+    // Remember inputs for the dust system (launch/skid emission).
+    this.lastThrottle = control.throttle;
+    this.lastBrake = control.brake;
+
+    // --- Visual body feel (cab model only — physics untouched) --------------
+    // Roll into turns: outward lean scaled by steering and speed.
+    const sf = Math.min(1, this.speedKmh / (this.tuning.topSpeed ?? 60));
+    const rollTarget = THREE.MathUtils.clamp(
+      -this.steerAngle * 0.25 * (0.3 + 0.7 * sf), -LEAN_ROLL_MAX, LEAN_ROLL_MAX);
+    // Pitch with longitudinal acceleration: nose up on throttle, dip on brake.
+    const accel = (signedSpeed - this._prevSignedSpeed) / dt;
+    this._prevSignedSpeed = signedSpeed;
+    const pitchTarget = THREE.MathUtils.clamp(
+      -accel * LEAN_PITCH_PER_ACCEL, -LEAN_PITCH_MAX, LEAN_PITCH_MAX);
+    this._leanRollV += ((rollTarget - this._leanRoll) * LEAN_SPRING_K - this._leanRollV * LEAN_SPRING_DAMP) * dt;
+    this._leanRoll += this._leanRollV * dt;
+    this._leanPitchV += ((pitchTarget - this._leanPitch) * LEAN_SPRING_K - this._leanPitchV * LEAN_SPRING_DAMP) * dt;
+    this._leanPitch += this._leanPitchV * dt;
+
+    // Suspension bounce: track the deepest fall speed; the moment the fall
+    // arrests (suspension caught it), dip the cab and let the spring rebound
+    // with a cartoon overshoot. Robust even though the suspension spreads the
+    // landing over many steps (a per-step dvy check misses it entirely).
+    this._fallVy = Math.min(this._fallVy ?? 0, v.y);
+    if (v.y > -0.5) {
+      if (this._fallVy < -BOUNCE_MIN_FALL) {
+        this._bounceV -= Math.min(BOUNCE_KICK_MAX, (-this._fallVy - BOUNCE_MIN_FALL) * BOUNCE_KICK);
+      }
+      this._fallVy = 0;
+    }
+    this._bounceV += (-this._bounce * BOUNCE_SPRING_K - this._bounceV * BOUNCE_SPRING_DAMP) * dt;
+    this._bounce = THREE.MathUtils.clamp(this._bounce + this._bounceV * dt, -BOUNCE_MAX, BOUNCE_MAX);
   }
 
   // Called after the physics step to sync visuals.
@@ -317,6 +380,10 @@ export class Truck {
       this.group.position.set(t.x, t.y, t.z);
       this.group.quaternion.set(r.x, r.y, r.z, r.w);
     }
+
+    // Cartoon body language: lean/pitch/bounce the cab over the wheels.
+    this.bodyVisual.rotation.set(this._leanPitch, 0, this._leanRoll);
+    this.bodyVisual.position.y = this._bounce;
 
     // Only sync placeholder wheels when the GLB hasn't loaded yet.
     if (!this._glbModel) {

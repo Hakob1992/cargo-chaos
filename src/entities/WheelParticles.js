@@ -14,6 +14,15 @@ const POOL_SIZE = 80;   // total sprites across all 4 wheels
 const MAX_LIFE  = 1.05; // seconds — cartoon smoke lingers
 const TEX_VARIANTS = 6; // distinct baked poof silhouettes
 
+// ---- Emission tunables ------------------------------------------------------
+const BASE_EMIT_PER_SEC = 9;    // per wheel at top speed (existing behaviour)
+const LAUNCH_EMIT_PER_SEC = 13; // extra per wheel while flooring it from low speed
+const SKID_EMIT_PER_SEC = 15;   // extra per wheel while sliding / hard braking
+const LAUNCH_SPEED_MAX = 22;    // km/h under which full throttle reads as a launch
+const SKID_LATERAL_DIV = 25;    // lateral km/h that maps to full skid dust
+const EXHAUST_INTERVAL = 0.4;   // seconds between put-put puffs under load
+const EXHAUST_MAX_SPEED = 40;   // km/h above which the engine stops puffing
+
 const CREAM   = '#f2e8cf';
 const INK     = '#2c2014';
 const SEPIA   = new THREE.Color(0xb2966a); // aged-loam tint at end of life
@@ -186,19 +195,66 @@ export class WheelParticles {
 
     if (!truck) return;
     const speed = truck.speedKmh;
-    if (speed < 2.5) return;
+    const thr = Math.abs(truck.lastThrottle ?? 0);
+
+    // Launch: flooring it from (near) standstill — wheels chew up the dirt.
+    const launch = thr > 0.6 && speed < LAUNCH_SPEED_MAX
+      ? 1 - speed / LAUNCH_SPEED_MAX : 0;
+    // Skid: sliding sideways, or stomping the brake at speed.
+    const lat = truck.lateralSpeedKmh ?? 0;
+    const skid = Math.min(1, Math.max(lat / SKID_LATERAL_DIV,
+      truck.lastBrake && speed > 20 ? 0.7 : 0));
+
+    // Exhaust puffs run even when wheel dust doesn't (e.g. revving from rest).
+    this.#updateExhaust(dt, truck, thr, speed);
+
+    if (speed < 2.5 && launch <= 0) return;
 
     this._tmpQ.copy(truck.group.quaternion);
     this._fwd.set(0, 0, 1).applyQuaternion(this._tmpQ);
     this._right.set(1, 0, 0).applyQuaternion(this._tmpQ);
 
     const sf = Math.min(1, speed / 58);
+    // Puff energy: launches kick dust even though the truck is barely moving.
+    const sfEff = Math.max(sf, launch * 0.7, skid * 0.6);
 
-    // ~9 puffs/wheel/sec at top speed → bold but not soupy.
-    const emitPerSec = sf * 9;
+    const emitPerSec = sf * BASE_EMIT_PER_SEC
+      + launch * LAUNCH_EMIT_PER_SEC
+      + skid * SKID_EMIT_PER_SEC;
     for (let wi = 0; wi < 4; wi++) {
       if (Math.random() >= emitPerSec * dt) continue;
-      this.#emitWheel(wi, truck, sf);
+      this.#emitWheel(wi, truck, sfEff);
+    }
+  }
+
+  // Comic put-put exhaust: an immediate double puff when the throttle is
+  // stomped, then a steady beat while the engine works hard at low speed.
+  #updateExhaust(dt, truck, thr, speed) {
+    this._exhCd = (this._exhCd ?? 0) - dt;
+    const prev = this._prevThr ?? 0;
+    this._prevThr = thr;
+    if (thr > 0.6 && prev <= 0.6) this.#emitExhaust(truck, 2, 1);
+    if (thr > 0.6 && speed < EXHAUST_MAX_SPEED && this._exhCd <= 0) {
+      this._exhCd = EXHAUST_INTERVAL;
+      this.#emitExhaust(truck, 1, 0.6);
+    }
+  }
+
+  #emitExhaust(truck, count, intensity) {
+    this._tmpQ.copy(truck.group.quaternion);
+    this._fwd.set(0, 0, 1).applyQuaternion(this._tmpQ);
+    for (let i = 0; i < count; i++) {
+      // Exhaust tip: rear-left corner, low.
+      this._wpos.set(-0.55, -0.05, -2.05)
+        .applyQuaternion(this._tmpQ)
+        .add(truck.group.position);
+      this._vel.copy(this._fwd).multiplyScalar(-(1.0 + Math.random() * 1.2));
+      this._vel.x += (Math.random() * 2 - 1) * 0.5;
+      this._vel.y = 0.8 + Math.random() * 1.0 * intensity;
+      this._vel.z += (Math.random() * 2 - 1) * 0.5;
+      const start = 0.16 + Math.random() * 0.1;
+      const end = start + 0.35 + Math.random() * 0.3 * (1 + intensity);
+      this._spawn(this._wpos, this._vel, start, end);
     }
   }
 
