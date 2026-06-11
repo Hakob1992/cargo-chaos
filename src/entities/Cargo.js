@@ -139,6 +139,7 @@ export class Cargo {
     this._steamCd = 0;         // armed-canister steam emission cooldown
     this._featherCd = 0;       // feather trickle cooldown while tipping
     this._fxByKey = {};        // lazily-created per-type BurstFX systems
+    this.cluckPending = false; // set on shuffles/knocks; Game plays the cluck
 
     const [hx, hy, hz] = delivery.size;
     this.halfH = hy;
@@ -447,10 +448,11 @@ export class Cargo {
       const intensity = THREE.MathUtils.clamp(over / (this.impactThreshold * 1.5), 0.35, 1);
       this.#emitSplash(Math.round(8 + intensity * 16), intensity);
     }
-    // Live animals: a knock startles them — a puff of feathers escapes.
+    // Live animals: a knock startles them — feathers + a squawk.
     if (b.failKind === 'escape') {
       const intensity = THREE.MathUtils.clamp(over / (this.impactThreshold * 1.5), 0.3, 1);
       this.#emitFeathers(Math.round(4 + intensity * 6), intensity);
+      this.cluckPending = true;
     }
 
     // Glass / eggs: one solid knock and it's gone.
@@ -706,6 +708,7 @@ export class Cargo {
       if (this._idleTimer <= 0) {
         this._idleTimer = IDLE_MIN_SEC + Math.random() * IDLE_VAR_SEC;
         this._idlePulse = 1;
+        this.cluckPending = true; // Game plays the cluck sound
         this.#emitFeathers(2, 0.3);
       }
     }

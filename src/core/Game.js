@@ -30,6 +30,8 @@ const SLOWMO_STAGE_SCALE = 0.35;    // sim speed during the beat
 // Camera shake on damage-stage transitions (on top of per-impact shake):
 const SHAKE_ON_DAMAGED = 0.16;
 const SHAKE_ON_RUINED = 0.4;
+// Cargo squash level that triggers the landing-thunk sound:
+const THUNK_SQUASH_EDGE = 0.3;
 
 export class Game {
   constructor() {
@@ -172,6 +174,7 @@ export class Game {
     if (this.state !== 'driving') return;
     this.state = 'result';
     this.audio.stopEngine();
+    this.audio.setTension(0);
     // A wrecked load gets a thud, not a fanfare.
     if (failed) this.audio.playImpact(1); else this.audio.playReward();
 
@@ -234,6 +237,7 @@ export class Game {
   #teardownRun() {
     this.paused = false;
     this.audio.stopEngine();
+    this.audio.setTension(0);
     if (this.customer) this.customer.hide();
     if (this.particles) { this.particles.dispose(); this.particles = null; }
     if (this.cargo) { this.cargo.dispose(); this.cargo = null; }
@@ -288,6 +292,7 @@ export class Game {
     this.hud.setPaused(this.paused);
     if (this.paused) {
       this.audio.stopEngine();
+      this.audio.setTension(0);
     } else {
       this.audio.startEngine();
       // Drop any time accrued while paused so physics doesn't lurch on resume.
@@ -345,9 +350,12 @@ export class Game {
         if (stage === 'ruined') {
           this.hitstop = Math.max(this.hitstop, HITSTOP_BREAK_SEC);
           this.addCamShake(SHAKE_ON_RUINED);
+          // Comedic break flourish flavoured by HOW it died.
+          this.audio.playBreak(this.cargo.failKind || this.cargo.behavior.failKind || 'crush');
         } else if (stage === 'damaged') {
           this.slowmo = Math.max(this.slowmo, SLOWMO_STAGE_SEC);
           this.addCamShake(SHAKE_ON_DAMAGED);
+          this.audio.playCrack();
         }
         this._lastStage = stage;
       }
@@ -391,6 +399,22 @@ export class Game {
 
     // Engine note tracks speed + throttle.
     this.audio.setEngine(this.truck.speedKmh, this.input.state.throttle);
+
+    // Nervous string tension while the cargo skates across the bed.
+    this.audio.setTension(this.cargo.broken ? 0 : (this.cargo.slideAmount ?? 0));
+
+    // Deep thunk the moment a landing squash kicks in.
+    const squash = this.cargo.squash ?? 0;
+    if (squash > THUNK_SQUASH_EDGE && (this._prevSquash ?? 0) <= THUNK_SQUASH_EDGE) {
+      this.audio.playThunk(squash);
+    }
+    this._prevSquash = squash;
+
+    // Startled cluck when a live-animal crate shuffles or takes a knock.
+    if (this.cargo.cluckPending) {
+      this.cargo.cluckPending = false;
+      this.audio.playCluck();
+    }
 
     // Customer reacts: panic when the cargo leans dangerously (≈ >43°).
     this.customer.setClock(this.elapsed);

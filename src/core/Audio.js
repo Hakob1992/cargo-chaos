@@ -135,4 +135,116 @@ export class AudioManager {
       osc.start(t); osc.stop(t + 0.42);
     });
   }
+
+  // Quick tone helper: one oscillator with a pitch ramp and a gain envelope.
+  #blip(type, f0, f1, dur, peak, when = 0) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime + when;
+    const osc = ctx.createOscillator(); osc.type = type;
+    const g = ctx.createGain();
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, peak), t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(this.master);
+    osc.start(t); osc.stop(t + dur + 0.03);
+  }
+
+  // ---- Tension (continuous while the cargo slides) ------------------------
+
+  // A nervous tremolo string that fades in with how hard the cargo is skating
+  // across the bed. Call every frame with 0..1; lazily builds its voice.
+  setTension(amount) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (!this.tGain) {
+      this.tOsc = ctx.createOscillator(); this.tOsc.type = 'sawtooth';
+      this.tOsc.frequency.value = 660;
+      this.tLfo = ctx.createOscillator(); this.tLfo.frequency.value = 9; // tremolo
+      this.tLfoGain = ctx.createGain(); this.tLfoGain.gain.value = 140;
+      this.tLfo.connect(this.tLfoGain); this.tLfoGain.connect(this.tOsc.frequency);
+      this.tFilter = ctx.createBiquadFilter(); this.tFilter.type = 'bandpass';
+      this.tFilter.frequency.value = 900; this.tFilter.Q.value = 4;
+      this.tGain = ctx.createGain(); this.tGain.gain.value = 0;
+      this.tOsc.connect(this.tFilter); this.tFilter.connect(this.tGain);
+      this.tGain.connect(this.master);
+      this.tOsc.start(); this.tLfo.start();
+    }
+    const a = Math.max(0, Math.min(1, amount));
+    this.tGain.gain.setTargetAtTime(a * 0.055, t, 0.08);
+    this.tOsc.frequency.setTargetAtTime(560 + a * 280, t, 0.1);
+  }
+
+  // ---- Cargo one-shots ------------------------------------------------------
+
+  // Deep cartoon thunk when the cargo body slams down after air time.
+  playThunk(intensity = 0.5) {
+    this.#blip('sine', 150 + intensity * 60, 46, 0.22, Math.min(0.4, 0.16 + intensity * 0.3));
+    this.#noiseBurst(0.12, 'lowpass', 300, 1, Math.min(0.25, 0.08 + intensity * 0.2));
+  }
+
+  // Dry snap when the cargo first cracks into the damaged stage.
+  playCrack() {
+    this.#noiseBurst(0.05, 'highpass', 2000, 2, 0.22);
+    this.#blip('square', 320, 140, 0.09, 0.12);
+  }
+
+  // Comedic break flourish, flavoured by HOW the cargo died.
+  playBreak(kind = 'crush') {
+    if (!this.ctx) return;
+    switch (kind) {
+      case 'shatter': // bright glass tinkle raining down
+        for (let i = 0; i < 7; i++) {
+          const f = 1700 + Math.random() * 2300;
+          this.#blip('sine', f, f * 0.6, 0.16 + Math.random() * 0.12, 0.07, i * 0.035);
+        }
+        this.#noiseBurst(0.2, 'highpass', 3200, 1.5, 0.2);
+        break;
+      case 'explode': // boom: sub drop + heavy noise
+        this.#blip('sine', 120, 28, 0.5, 0.5);
+        this.#noiseBurst(0.5, 'lowpass', 420, 0.8, 0.5);
+        break;
+      case 'spill': // descending watery glugs
+        for (let i = 0; i < 4; i++) {
+          this.#blip('sine', 520 - i * 70, 240 - i * 30, 0.13, 0.14, i * 0.09);
+        }
+        this.#noiseBurst(0.35, 'bandpass', 1100, 2, 0.16);
+        break;
+      case 'escape': // panicked squawks fleeing the crate
+        for (let i = 0; i < 4; i++) {
+          this.#blip('square', 760 + Math.random() * 240, 1250, 0.1, 0.09, i * 0.12);
+        }
+        break;
+      default: // crush/collapse: a sad flop
+        this.#blip('triangle', 240, 70, 0.4, 0.22);
+        this.#noiseBurst(0.25, 'lowpass', 500, 1, 0.25);
+    }
+  }
+
+  // A startled cluck from a live-animal crate (idle shuffle / knocks).
+  playCluck() {
+    this.#blip('square', 880, 1320, 0.06, 0.06);
+    this.#blip('square', 660, 440, 0.08, 0.05, 0.07);
+  }
+
+  // Relieved "phew" after a near-miss: a breathy sigh sweeping down.
+  playPhew() {
+    this.#noiseBurst(0.45, 'bandpass', 1500, 1.2, 0.14);
+    this.#blip('sine', 740, 392, 0.4, 0.08, 0.05);
+  }
+
+  // ---- Result-screen one-shots ----------------------------------------------
+
+  // One star slamming in — pitch rises with each star (0-based index).
+  playStar(index = 0) {
+    const f = 523.25 * Math.pow(1.2599, index); // up a major third each star
+    this.#blip('triangle', f, f, 0.3, 0.2);
+    this.#noiseBurst(0.05, 'highpass', 2500, 2, 0.1); // tiny sparkle tick
+  }
+
+  // Tiny counter blip for the payout count-up; pitch eases up with progress.
+  playTick(frac = 0) {
+    this.#blip('square', 900 + frac * 500, 900 + frac * 500, 0.035, 0.045);
+  }
 }
