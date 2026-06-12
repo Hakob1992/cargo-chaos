@@ -9,6 +9,7 @@ import { Cargo } from '../entities/Cargo.js';
 import { UPGRADES } from '../data/upgrades.js';
 import { VEHICLES } from '../data/vehicles.js';
 import { ratingFor } from '../data/deliveries.js';
+import { ROUTES } from '../data/routes.js';
 import { HUD } from '../ui/HUD.js';
 import { Menu } from '../ui/Menu.js';
 import { Customer } from '../ui/Customer.js';
@@ -139,11 +140,14 @@ export class Game {
 
   // ---- Game flow -----------------------------------------------------------
 
-  startDelivery(delivery) {
+  startDelivery(delivery, routeId = 'highway') {
     this.#teardownRun();
     // Called from a click handler — a valid user gesture to start audio.
     this.audio.unlock();
     this.activeDelivery = delivery;
+    // Phase 5 — risk/reward route: open the chosen branch, barricade the other.
+    this.route = ROUTES[routeId] ?? ROUTES.highway;
+    this.world.setActiveRoute(this.route.id);
     const tuning = this.computeTuning();
     this.truck = new Truck(this.scene, this.physics, this.startPos, tuning);
     this.cargo = new Cargo(this.scene, this.physics, delivery, this.truck);
@@ -156,9 +160,9 @@ export class Game {
     this._failing = false;
     this._failAt = 0;
     this.styleScore = 0;
-    // Par time scales with the route length (≈11 m/s average pace). Beat it for
-    // the full time bonus; up to 2× par still scores something.
-    this.targetTime = (this.world.routeLength || 420) / 11;
+    // Par time = chosen route's length / its par pace. The shortcut's pace is
+    // generous (hazards expected) — beat it hard for a big time score.
+    this.targetTime = (this.world.routeLength || 420) / this.route.parSpeed;
     this.camRoll = 0;
     this.camShake = 0;
     this._prevTruckVY = 0;
@@ -171,7 +175,7 @@ export class Game {
     this._scared = false;
     this.state = 'driving';
     this.menu.hide();
-    this.hud.show(delivery);
+    this.hud.show(delivery, this.route);
     this.customer.bind(delivery);
     this.customer.onStart();
     this.#snapCamera();
@@ -190,7 +194,9 @@ export class Game {
     this.customer.onResult(rating.label);
     const floor = this.truck.tuning.insurance; // insurance payout floor
     const payoutFrac = Math.max(rating.payout, floor);
-    const earnings = Math.round(this.activeDelivery.reward * payoutFrac);
+    // The risky route pays a bonus on whatever survives the trip.
+    const routeMult = this.route?.payoutMult ?? 1;
+    const earnings = Math.round(this.activeDelivery.reward * payoutFrac * routeMult);
 
     // Star rating from three inputs: condition, time vs par, and clean style.
     const score = this.#computeStars(integrity, failed);
@@ -212,6 +218,7 @@ export class Game {
       stars: score.stars,
       breakdown: { condition: score.condition, time: score.time, style: score.style },
       totalStars: this.save.totalStars(),
+      route: this.route,
     });
   }
 

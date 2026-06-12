@@ -1,6 +1,7 @@
 import { DELIVERIES } from '../data/deliveries.js';
 import { UPGRADES } from '../data/upgrades.js';
 import { VEHICLES } from '../data/vehicles.js';
+import { ROUTES } from '../data/routes.js';
 import { formatTime } from './HUD.js';
 import { VehicleViewer } from './VehicleViewer.js';
 
@@ -152,10 +153,58 @@ export class Menu {
       if (locked) {
         card.disabled = true;
       } else {
-        card.addEventListener('click', () => this.game.startDelivery(d));
+        // Phase 5: picking a delivery opens the route choice, not the run.
+        card.addEventListener('click', () => this.#showRouteSelect(d));
       }
       wrap.appendChild(card);
     });
+  }
+
+  // ---- Route picker (Phase 5 risk/reward) -----------------------------------
+
+  // Overlay with the two routes to the pad: the safe long way vs the risky cut.
+  #showRouteSelect(delivery) {
+    const old = this.el.querySelector('.route-backdrop');
+    if (old) old.remove();
+    const world = this.game.world;
+    const km = (m) => `≈${Math.round(m / 10) * 10} m`;
+    const card = (r) => {
+      const len = world ? world.lengthOf(r.id) : 0;
+      const par = len ? Math.round(len / r.parSpeed) : 0;
+      const hazards = r.id === 'shortcut'
+        ? '<div class="rt-hazards">⚠ mud · bumps · JUMP</div>'
+        : '<div class="rt-hazards safe">smooth all the way</div>';
+      return `
+        <button class="route-card ${r.tag === 'RISKY' ? 'risky' : 'safe'}" data-route="${r.id}">
+          <div class="rt-tag">${r.tag}</div>
+          <div class="rt-name">${r.name}</div>
+          <div class="rt-desc">${r.desc}</div>
+          ${hazards}
+          <div class="rt-stats">
+            <span>${km(len)}</span>
+            <span>par ${par}s</span>
+            <span class="rt-pay">${r.payoutMult > 1 ? `×${r.payoutMult} PAY` : 'normal pay'}</span>
+          </div>
+        </button>`;
+    };
+    const overlay = document.createElement('div');
+    overlay.className = 'route-backdrop';
+    overlay.innerHTML = `
+      <div class="route-panel">
+        <div class="route-title">PICK YOUR ROUTE</div>
+        <div class="route-cargo">${delivery.name} · $ ${delivery.reward.toLocaleString()}</div>
+        <div class="route-cards">
+          ${card(ROUTES.highway)}
+          ${card(ROUTES.shortcut)}
+        </div>
+        <button class="route-cancel" data-cancel>BACK</button>
+      </div>`;
+    this.el.appendChild(overlay);
+    overlay.querySelector('[data-cancel]').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    for (const btn of overlay.querySelectorAll('[data-route]')) {
+      btn.addEventListener('click', () => this.game.startDelivery(delivery, btn.dataset.route));
+    }
   }
 
   #renderUpgrades() {
@@ -208,7 +257,7 @@ export class Menu {
   }
 
   showResult({ delivery, integrity, rating, earnings, time, insured, failed = false, failReason = null,
-               stars = 1, breakdown = { condition: 0, time: 0, style: 0 }, totalStars = 0 }) {
+               stars = 1, breakdown = { condition: 0, time: 0, style: 0 }, totalStars = 0, route = null }) {
     this.#disposeViewer();
     this.el.classList.remove('hidden');
     const cls = rating.toLowerCase();
@@ -232,6 +281,7 @@ export class Menu {
         <div class="result-card rating-${cls} ${failed ? 'is-failed' : ''}">
           <div class="r-title">${failed ? 'DELIVERY FAILED' : 'DELIVERY COMPLETE'}</div>
           <div class="r-cargo">${delivery.name}${reasonLabel ? ` — ${reasonLabel}` : ''}</div>
+          ${route ? `<div class="r-route ${route.tag === 'RISKY' ? 'risky' : ''}">via ${route.name}${route.payoutMult > 1 ? ` · ×${route.payoutMult} PAY` : ''}</div>` : ''}
           <div class="r-stars">${starRow}</div>
           ${isNewBest ? '<div class="r-newbest">NEW BEST!</div>' : ''}
           <div class="r-breakdown">
@@ -257,7 +307,8 @@ export class Menu {
       </div>
     `;
     this.el.querySelector('[data-garage]').addEventListener('click', () => this.game.returnToGarage());
-    this.el.querySelector('[data-retry]').addEventListener('click', () => this.game.startDelivery(delivery));
+    this.el.querySelector('[data-retry]').addEventListener('click', () =>
+      this.game.startDelivery(delivery, route ? route.id : 'highway'));
 
     // One rising note per lit star, timed to the CSS slam stagger.
     for (let i = 0; i < stars; i++) {

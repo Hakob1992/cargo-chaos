@@ -8,6 +8,7 @@ export class HUD {
     this.el.innerHTML = `
       <div class="hud-panel">
         <div class="row"><span class="label">CARGO</span><span class="val" data-cargo>—</span></div>
+        <div class="row"><span class="label">ROUTE</span><span class="val route-label" data-route>—</span></div>
         <div class="row"><span class="label">CONDITION</span><span class="val cond-label" data-cond>PERFECT</span></div>
         <div class="cond-bar"><div class="cond-fill" data-cond-fill></div></div>
         <div class="row"><span class="label">TIME</span><span class="val" data-time>00:00.00</span></div>
@@ -52,6 +53,7 @@ export class HUD {
     root.appendChild(this.el);
 
     this.timeEl = this.el.querySelector('[data-time]');
+    this.routeEl = this.el.querySelector('[data-route]');
     this.condEl = this.el.querySelector('[data-cond]');
     this.condFill = this.el.querySelector('[data-cond-fill]');
     this.cargoEl = this.el.querySelector('[data-cargo]');
@@ -144,8 +146,12 @@ export class HUD {
     this.cargoWarnEl.classList.toggle('hidden', !msg);
   }
 
-  show(delivery) {
+  show(delivery, route = null) {
     this.cargoEl.textContent = delivery.name;
+    if (this.routeEl) {
+      this.routeEl.textContent = route ? route.name : '—';
+      this.routeEl.style.color = route && route.tag === 'RISKY' ? '#e08a3c' : '#7fd6a0';
+    }
     this.setDeliverable(false);
     this.setOffRoad(false);
     this.setCargoWarn(null);

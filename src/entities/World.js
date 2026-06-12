@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RAPIER } from '../core/Physics.js';
+import { SHORTCUT_HAZARDS } from '../data/routes.js';
 
 const TREE_FILES = ['Tree_1', 'Tree_2', 'Tree_3', 'Tree_4', 'Tree_5'];
 const TREE_TARGET_H = 5.5;
@@ -18,13 +19,18 @@ function mulberry32(seed) {
   };
 }
 
-// A long, winding European-style backroad over gently rolling countryside.
-// The road is a Catmull-Rom ribbon through a procedurally-generated path
-// (organic curves, sharp turns, S-bends, and a tight HAIRPIN "expert section"),
-// hugging an fbm-noise terrain. Forest clusters, open fields, rocks, farms and
-// dirt side-paths are scattered with noise so there's no obvious grid pattern.
-// All filler props are InstancedMesh, so the whole forest costs only a handful
-// of draw calls.
+// Phase 5 — a DESIGNED countryside level with a risk/reward fork. One shared
+// farmyard stem leads to a signposted junction where two routes split and
+// reconverge on the same delivery pad:
+//
+//   THE HIGHWAY    — long, wide, smooth sweepers all the way around.
+//   FARM SHORTCUT  — cuts the loop: narrow track, mud pits, washboard bumps
+//                    and a jump ramp.
+//
+// The route is chosen pre-run (Menu); a barricade physically closes the other
+// branch so its laxer par can't be exploited. Terrain/scenery machinery is the
+// same as the old procedural build (fbm terrain, instanced forests, farms) —
+// only the road layout is authored now.
 export class World {
   constructor(scene, physics) {
     this.scene = scene;
@@ -34,13 +40,14 @@ export class World {
 
     this._baseY = this.#fbm(0, 0); // so terrainY(0,0) ≈ 0 (clean spawn)
 
-    const gen = this.#generatePath();
-    this.pathPts = gen.pts;
-    this.segType = gen.segType;   // per-waypoint pacing label
-    this.path = new THREE.CatmullRomCurve3(this.pathPts, false, 'catmullrom', 0.5);
+    const gen = this.#generateRoutes();
+    this.stemPts = gen.stem;
+    this.hwPts = gen.highway;
+    this.scPts = gen.shortcut;
+    this.forkPos = gen.fork;
 
-    // Area bounds (path bbox + margin) drive terrain + scatter extents.
-    const bb = new THREE.Box3().setFromPoints(this.pathPts);
+    // Area bounds (all route points + margin) drive terrain + scatter extents.
+    const bb = new THREE.Box3().setFromPoints([...gen.stem, ...gen.highway, ...gen.shortcut]);
     const M = 75;
     this.bounds = {
       minX: bb.min.x - M, maxX: bb.max.x + M,
@@ -49,9 +56,10 @@ export class World {
 
     this.#buildLighting();
     this.#buildTerrain();
-    this.#buildRoad();
+    this.#buildRoads();
     this.#buildDeliveryPad();
     this.#buildScenery();
+    this.setActiveRoute('highway');
   }
 
   // ---- Terrain height (2D fbm value-noise) --------------------------------
@@ -80,38 +88,70 @@ export class World {
     return (this.#fbm(x, z) - this._baseY) * flat;
   }
 
-  // ---- Procedural winding path --------------------------------------------
+  // ---- Designed route layout (Phase 5) -------------------------------------
 
-  // Deliberate difficulty pacing, NOT pure randomness:
-  //   Recovery → Challenge → Recovery → Challenge → Recovery → BIG (hairpin) → Finish
-  // Recovery sections straighten out (cake settles); challenges throw S-bends and
-  // sharp turns; the big challenge is a tight hairpin switchback.
-  #generatePath() {
+  // Hand-authored fork layout. The stem heads out of the farmyard, the highway
+  // sweeps a long arc east and back, and the shortcut cuts straight across the
+  // inside of that arc with authored S-bend offsets. The shortcut is derived
+  // analytically from fork→pad so both branches ALWAYS converge exactly.
+  #generateRoutes() {
     const rng = mulberry32(20260608);
-    const pts = [new THREE.Vector3(0, 0, 0)];
-    const segType = ['recovery'];
+
+    // STEM — a straight-ish launch out of the farmyard, heading +Z.
+    const stem = [new THREE.Vector3(0, 0, 0)];
     let x = 0, z = 0, h = 0; // h = heading; 0 → +Z
-    const run = (type, steps, turnFn) => {
-      const step = type === 'big' ? 12 : (type === 'challenge' ? 16 : 22);
-      for (let i = 0; i < steps; i++) {
-        let turn = turnFn(i);
-        if (x > 60) turn -= 0.18; else if (x < -60) turn += 0.18; // stay in bounds
-        h += turn;
-        x += Math.sin(h) * step;
-        z += Math.cos(h) * step;
-        pts.push(new THREE.Vector3(x, 0, z));
-        segType.push(type);
-      }
-    };
-    // forward bias term pulls heading back toward +Z (used in calm sections)
-    run('recovery', 4, () => (rng() - 0.5) * 0.10 - h * 0.25);                       // R1: settle
-    run('challenge', 6, (i) => [0.55, 0.45, -0.5, -0.55, 0.25, 0.0][i] + (rng() - 0.5) * 0.08); // C1: S-bend
-    run('recovery', 4, () => (rng() - 0.5) * 0.10 - h * 0.30);                       // R2
-    run('challenge', 6, (i) => [-0.6, -0.45, 0.4, 0.5, -0.3, 0.0][i] + (rng() - 0.5) * 0.08);   // C2: sharp L→R
-    run('recovery', 3, () => (rng() - 0.5) * 0.08 - h * 0.30);                       // R3: breather
-    run('big', 4, () => 0.72);                                                       // BIG: hairpin (~165°)
-    run('finish', 5, () => (rng() - 0.5) * 0.06 - h * 0.28);                         // straighten to pad
-    return { pts, segType };
+    for (let i = 0; i < 4; i++) {
+      h += (rng() - 0.5) * 0.06;
+      x += Math.sin(h) * 20; z += Math.cos(h) * 20;
+      stem.push(new THREE.Vector3(x, 0, z));
+    }
+    const fork = stem[stem.length - 1].clone();
+
+    // HIGHWAY — authored sweep: bend east, long diagonal, sweep back left,
+    // then ease north into the pad. Gentle turns only (≤0.3 rad/step).
+    const hwTurns = [
+      0.36, 0.36, 0.3,                          // bend hard east — commit to the detour
+      0.0, 0.0, 0.0, 0.0,                       // long diagonal north-east
+      -0.18, -0.22, -0.24, -0.24, -0.22, -0.18, // big sweep back left
+      0.0, 0.0, 0.0,                            // straight north-west
+      0.1, 0.12, 0.08,                          // ease right, face north
+      0.0, 0.0, 0.0, 0.0, 0.0,                  // long finish straight to the pad
+    ];
+    const highway = [];
+    let hx = fork.x, hz = fork.z, hh = h;
+    for (const turn of hwTurns) {
+      let tt = turn + (rng() - 0.5) * 0.03;
+      if (hx > 115) tt -= 0.2; else if (hx < -45) tt += 0.2; // stay in bounds
+      hh += tt;
+      hx += Math.sin(hh) * 23; hz += Math.cos(hh) * 23;
+      highway.push(new THREE.Vector3(hx, 0, hz));
+    }
+    const pad = highway[highway.length - 1].clone();
+
+    // SHORTCUT — cut the corner: blend the straight fork→pad line with authored
+    // perpendicular S-bend offsets, pushed to the OPPOSITE side of the highway
+    // bulge so the two branches never meet until the pad.
+    const dir = new THREE.Vector2(pad.x - fork.x, pad.z - fork.z);
+    const L = dir.length(); dir.normalize();
+    const perp = new THREE.Vector2(dir.y, -dir.x); // (x,z) perpendicular
+    const mid = highway[Math.floor(highway.length / 2)];
+    const hwSide = Math.sign(perp.dot(new THREE.Vector2(mid.x - fork.x, mid.z - fork.z))) || 1;
+    const side = -hwSide;
+    // Offset amplitudes (m) along the cut — a wandering farm track with two
+    // S-bends. Index 0 is the fork itself (amplitude 0, skipped below).
+    const amps = [0, 9, 18, 24, 18, 4, -10, -16, -8, 6, 10, 3, 0];
+    const shortcut = [];
+    for (let k = 1; k < amps.length; k++) {
+      const t = k / (amps.length - 1);
+      shortcut.push(new THREE.Vector3(
+        fork.x + dir.x * L * t + perp.x * amps[k] * side,
+        0,
+        fork.z + dir.y * L * t + perp.y * amps[k] * side
+      ));
+    }
+    shortcut[shortcut.length - 1].copy(pad);
+
+    return { stem, highway, shortcut, fork, pad };
   }
 
   // ---- Lighting / sky ------------------------------------------------------
@@ -222,19 +262,69 @@ export class World {
     );
   }
 
-  // ---- Road ribbon ---------------------------------------------------------
+  // ---- Roads (stem + two branches) ------------------------------------------
 
-  #buildRoad() {
-    const N = 360;
-    const samples = this.path.getSpacedPoints(N);
-    this._centerline = samples; // for distance-to-road queries
-    // Half-width from local curvature: tight corners pinch narrower (harder).
+  #buildRoads() {
+    const curve = (head, pts) =>
+      new THREE.CatmullRomCurve3([head.clone(), ...pts.map((p) => p.clone())], false, 'catmullrom', 0.5);
+
+    const stemCurve = new THREE.CatmullRomCurve3(this.stemPts, false, 'catmullrom', 0.5);
+    const hwCurve = curve(this.forkPos, this.hwPts);
+    const scCurve = curve(this.forkPos, this.scPts);
+
+    const stemS = stemCurve.getSpacedPoints(48);
+    const hwS = hwCurve.getSpacedPoints(240);
+    const scS = scCurve.getSpacedPoints(150);
+
+    // Ribbons: highway wide & forgiving, shortcut narrow & mean (lifted a hair
+    // so the overlapping fork joint doesn't z-fight).
+    this.stemLen = this.#ribbon(stemS, 4.0, 4.8, 0);
+    this.hwLen = this.#ribbon(hwS, 4.2, 5.4, 0);
+    this.scLen = this.#ribbon(scS, 2.6, 3.4, 0.012);
+
+    // Per-road drivable info for off-road queries: edge = half-width + grace.
+    this._roads = [
+      { samples: stemS, edge: 5.4 },
+      { samples: hwS, edge: 5.8 },
+      { samples: scS, edge: 3.9 },
+    ];
+    this._centerline = hwS; // scenery (farms/dirt paths) hangs off the highway
+
+    this.deliveryPos = hwS[hwS.length - 1].clone();
+    this.deliveryPos.y = this.terrainY(this.deliveryPos.x, this.deliveryPos.z);
+
+    // A road-coloured disc at the junction masks the three ribbon seams.
+    const patch = new THREE.Mesh(
+      new THREE.CircleGeometry(7, 24),
+      new THREE.MeshStandardMaterial({ color: 0xb89a72, roughness: 1 })
+    );
+    patch.rotation.x = -Math.PI / 2;
+    patch.position.set(this.forkPos.x, this.terrainY(this.forkPos.x, this.forkPos.z) + this.roadLift + 0.006, this.forkPos.z);
+    patch.receiveShadow = true;
+    this.scene.add(patch);
+
+    // Shortcut hazards + the barricades that close the unchosen branch.
+    this.#buildMud(scS);
+    this.#buildBumps(scS);
+    this.#buildRamp(scS);
+    this.barriers = {
+      highway: this.#buildBarrier(hwS, 5.0),
+      shortcut: this.#buildBarrier(scS, 3.4),
+    };
+    this.#buildSignpost(stemS, hwS, scS);
+  }
+
+  // Build one road ribbon (mesh + trimesh collider) along `samples`, with the
+  // half-width pinching from hwMax on straights to hwMin in tight corners.
+  // Returns the centreline length in metres.
+  #ribbon(samples, hwMin, hwMax, lift) {
+    const N = samples.length - 1;
     const hwArr = new Array(N + 1);
     for (let i = 0; i <= N; i++) {
       const a = samples[Math.max(0, i - 1)], b = samples[i], c = samples[Math.min(N, i + 1)];
       const h1 = Math.atan2(b.x - a.x, b.z - a.z), h2 = Math.atan2(c.x - b.x, c.z - b.z);
       let dh = h2 - h1; while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI;
-      hwArr[i] = THREE.MathUtils.lerp(4.5, 3.0, THREE.MathUtils.smoothstep(Math.abs(dh), 0.02, 0.12));
+      hwArr[i] = THREE.MathUtils.lerp(hwMax, hwMin, THREE.MathUtils.smoothstep(Math.abs(dh), 0.02, 0.12));
     }
     const hwSmooth = (i) => { let s = 0, n = 0; for (let k = -3; k <= 3; k++) { const j = i + k; if (j >= 0 && j <= N) { s += hwArr[j]; n++; } } return s / n; };
 
@@ -247,7 +337,7 @@ export class World {
       tan.set(b.x - a.x, 0, b.z - a.z).normalize();
       perp.set(tan.z, 0, -tan.x);
       const hw = hwSmooth(i);
-      const y = this.terrainY(c.x, c.z) + this.roadLift;
+      const y = this.terrainY(c.x, c.z) + this.roadLift + lift;
       if (i > 0) dist += Math.hypot(c.x - samples[i - 1].x, c.z - samples[i - 1].z);
       positions.push(
         c.x + perp.x * hw, y, c.z + perp.z * hw,
@@ -278,26 +368,17 @@ export class World {
       RAPIER.ColliderDesc.trimesh(new Float32Array(positions), new Uint32Array(indices)).setFriction(1.1),
       body
     );
-
-    this.deliveryPos = samples[N].clone();
-    this.deliveryPos.y = this.terrainY(this.deliveryPos.x, this.deliveryPos.z);
-    this.routeLength = dist; // total centreline length (m) — used for par time
-
-    this.#buildMud(samples, N);
+    return dist;
   }
 
-  // Mud patches in the challenge/hairpin sections — they cut tyre grip so the
-  // truck (and cargo) can slide if you take them too fast. Visual + a grip zone.
-  #buildMud(samples, N) {
+  // ---- Shortcut hazards -------------------------------------------------------
+
+  // Mud pits at authored fractions along the shortcut — they cut tyre grip.
+  #buildMud(scS) {
     this.mudPatches = [];
-    const segLen = this.segType.length - 1;
     const mat = new THREE.MeshStandardMaterial({ color: 0x3a2c1c, roughness: 0.32, metalness: 0.05 });
-    for (let i = 8; i < N - 8; i++) {
-      const st = this.segType[Math.round((i / N) * segLen)];
-      if (st !== 'challenge' && st !== 'big') continue;
-      const c = samples[i];
-      if (this.mudPatches.some((m) => Math.hypot(m.x - c.x, m.z - c.z) < 32)) continue;
-      if (this.mudPatches.length >= 4) break;
+    for (const f of SHORTCUT_HAZARDS.mud) {
+      const c = scS[Math.floor(f * (scS.length - 1))];
       const r = 4.2;
       this.mudPatches.push({ x: c.x, z: c.z, r });
       const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 22), mat);
@@ -308,8 +389,174 @@ export class World {
     }
   }
 
+  // Washboard bump strips: low bars across the track that kick cargo airborne.
+  #buildBumps(scS) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x8a6f4d, roughness: 1 });
+    const geo = new THREE.BoxGeometry(7.2, 0.14, 0.44);
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const q = new THREE.Quaternion();
+    for (const f of SHORTCUT_HAZARDS.bumpClusters) {
+      const base = Math.floor(f * (scS.length - 1));
+      for (let b = 0; b < SHORTCUT_HAZARDS.bumpsPerCluster; b++) {
+        const i = Math.min(scS.length - 2, base + b * SHORTCUT_HAZARDS.bumpSpacingSamples);
+        const c = scS[i], n = scS[i + 1];
+        const yaw = Math.atan2(n.x - c.x, n.z - c.z);
+        const y = this.terrainY(c.x, c.z) + this.roadLift + 0.05;
+        q.setFromAxisAngle(UP, yaw);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(c.x, y, c.z);
+        mesh.quaternion.copy(q);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(3.6, 0.07, 0.22)
+            .setTranslation(c.x, y, c.z)
+            .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
+            .setFriction(1.0),
+          body
+        );
+      }
+    }
+  }
+
+  // The jump: a plank ramp across the track. Hit it fast for air (style!), but
+  // the landing is the cargo's problem.
+  #buildRamp(scS) {
+    const i = Math.floor(SHORTCUT_HAZARDS.ramp * (scS.length - 1));
+    const c = scS[i], n = scS[Math.min(scS.length - 1, i + 1)];
+    const yaw = Math.atan2(n.x - c.x, n.z - c.z);
+    const PITCH = 0.21; // rad — launch angle
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -PITCH);
+    const q = qYaw.clone().multiply(qPitch);
+    const y = this.terrainY(c.x, c.z) + this.roadLift + Math.sin(PITCH) * 1.6 * 0.55;
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(6.8, 0.24, 3.2),
+      new THREE.MeshStandardMaterial({ color: 0xb8915f, roughness: 0.9 })
+    );
+    mesh.position.set(c.x, y, c.z);
+    mesh.quaternion.copy(q);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    this.scene.add(mesh);
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(3.4, 0.12, 1.6)
+        .setTranslation(c.x, y, c.z)
+        .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
+        .setFriction(1.1),
+      body
+    );
+    this.rampPos = { x: c.x, z: c.z };
+  }
+
+  // ---- Barricades + signpost ---------------------------------------------------
+
+  // A striped sawhorse across a branch entrance, a few metres past the fork.
+  // Built once per branch; setActiveRoute() shows/enables exactly one of them.
+  #buildBarrier(samples, halfWidth) {
+    const i = 7;
+    const c = samples[i], n = samples[i + 1];
+    const yaw = Math.atan2(n.x - c.x, n.z - c.z);
+    const y = this.terrainY(c.x, c.z) + this.roadLift;
+
+    const g = new THREE.Group();
+    g.position.set(c.x, y, c.z);
+    g.rotation.y = yaw;
+    const post = new THREE.MeshStandardMaterial({ color: 0x6b5535, roughness: 0.9 });
+    const w = halfWidth + 0.6;
+    for (const px of [-w + 0.5, w - 0.5]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.05, 0.22), post);
+      p.position.set(px, 0.52, 0); p.castShadow = true; g.add(p);
+    }
+    const plank = new THREE.Mesh(
+      new THREE.BoxGeometry(w * 2, 0.32, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0xd0452b, roughness: 0.8 })
+    );
+    plank.position.y = 0.82; plank.castShadow = true; g.add(plank);
+    const plank2 = new THREE.Mesh(
+      new THREE.BoxGeometry(w * 2, 0.18, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0xf2e8cf, roughness: 0.8 })
+    );
+    plank2.position.y = 0.5; plank2.castShadow = true; g.add(plank2);
+    this.scene.add(g);
+
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
+    const collider = this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(w, 0.6, 0.12)
+        .setTranslation(c.x, y + 0.6, c.z)
+        .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }),
+      body
+    );
+    return { group: g, collider };
+  }
+
+  // Fork signpost: a pole beside the junction with one arrow plank per branch.
+  #buildSignpost(stemS, hwS, scS) {
+    const f = this.forkPos;
+    // Plant it beside the stem, out of the roadway.
+    const a = stemS[stemS.length - 2], b = stemS[stemS.length - 1];
+    const tx = b.x - a.x, tz = b.z - a.z, tl = Math.hypot(tx, tz) || 1;
+    const px = f.x + (tz / tl) * 7.5, pz = f.z + (-tx / tl) * 7.5;
+    const py = this.terrainY(px, pz);
+
+    const g = new THREE.Group();
+    g.position.set(px, py, pz);
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.16, 3.0, 8),
+      new THREE.MeshStandardMaterial({ color: 0x6b5535, roughness: 0.9 })
+    );
+    pole.position.y = 1.5; pole.castShadow = true; g.add(pole);
+
+    const mkPlank = (text, towards, yLevel, tint) => {
+      const cnv = document.createElement('canvas'); cnv.width = 512; cnv.height = 96;
+      const ctx = cnv.getContext('2d');
+      ctx.fillStyle = '#f2e8cf'; ctx.fillRect(0, 0, 512, 96);
+      ctx.strokeStyle = '#2c2014'; ctx.lineWidth = 10; ctx.strokeRect(5, 5, 502, 86);
+      ctx.fillStyle = tint; ctx.font = 'bold 52px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, 256, 52);
+      const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
+      const plank = new THREE.Mesh(
+        new THREE.BoxGeometry(3.0, 0.6, 0.08),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 })
+      );
+      // Point the plank's long axis along the branch's initial heading.
+      const h = Math.atan2(towards.x - f.x, towards.z - f.z);
+      plank.rotation.y = h - Math.PI / 2;
+      plank.position.y = yLevel;
+      plank.castShadow = true;
+      g.add(plank);
+    };
+    mkPlank('HIGHWAY →', hwS[10], 2.6, '#1f7a44');
+    mkPlank('SHORTCUT →', scS[10], 2.0, '#b23a1e');
+    this.scene.add(g);
+  }
+
+  // ---- Route selection (Phase 5 API) -------------------------------------------
+
+  // Open the chosen branch and barricade the other. Sets routeLength for par.
+  setActiveRoute(routeId) {
+    this.activeRouteId = routeId === 'shortcut' ? 'shortcut' : 'highway';
+    const closed = this.activeRouteId === 'shortcut' ? 'highway' : 'shortcut';
+    for (const [id, bar] of Object.entries(this.barriers)) {
+      const on = id === closed;
+      bar.group.visible = on;
+      bar.collider.setEnabled(on);
+    }
+    this.routeLength = this.stemLen + (this.activeRouteId === 'shortcut' ? this.scLen : this.hwLen);
+  }
+
+  // Centreline length (m) of a route choice, for the pre-run menu.
+  lengthOf(routeId) {
+    return this.stemLen + (routeId === 'shortcut' ? this.scLen : this.hwLen);
+  }
+
   // Grip multiplier at a world position (1 = full, lower on mud).
-  gripAt(x, z) {
+  // Accepts a Vector3 or (x, z) — Game passes the truck position object.
+  gripAt(p, maybeZ) {
+    const x = typeof p === 'object' ? p.x : p;
+    const z = typeof p === 'object' ? p.z : maybeZ;
     if (!this.mudPatches) return 1;
     let g = 1;
     for (const m of this.mudPatches) {
@@ -319,27 +566,38 @@ export class World {
     return g;
   }
 
-  // Min distance from (x,z) to the road centreline (coarse, fast enough).
+  // Min distance from (x,z) to ANY road centreline (coarse, fast enough).
   #distToRoad(x, z) {
-    let best = 1e9; const s = this._centerline; const step = 3; // sample every 3rd
-    for (let i = 0; i < s.length; i += step) {
-      const dx = s[i].x - x, dz = s[i].z - z; const d = dx * dx + dz * dz;
-      if (d < best) best = d;
+    let best = 1e9;
+    for (const road of this._roads) {
+      const s = road.samples, step = 3;
+      for (let i = 0; i < s.length; i += step) {
+        const dx = s[i].x - x, dz = s[i].z - z; const d = dx * dx + dz * dz;
+        if (d < best) best = d;
+      }
     }
     return Math.sqrt(best);
   }
 
   // How far (in metres) a world position lies BEYOND the drivable road edge.
-  // Returns 0 while on the road (or within a small forgiveness margin) and grows
-  // as the truck strays into the rough terrain — used to damage fragile cargo.
+  // Each road carries its own edge (the narrow shortcut forgives less).
   // Parking on the delivery pad never counts as off-road.
   offRoadDistance(x, z) {
     if (this.deliveryPos) {
       const pd = Math.hypot(x - this.deliveryPos.x, z - this.deliveryPos.z);
       if (pd < 6) return 0;
     }
-    const EDGE = 5.0; // widest half-width (~4.5) + a little grace for the wheels
-    return Math.max(0, this.#distToRoad(x, z) - EDGE);
+    let best = 1e9;
+    for (const road of this._roads) {
+      const s = road.samples, step = 3;
+      let d2 = 1e18;
+      for (let i = 0; i < s.length; i += step) {
+        const dx = s[i].x - x, dz = s[i].z - z; const d = dx * dx + dz * dz;
+        if (d < d2) d2 = d;
+      }
+      best = Math.min(best, Math.sqrt(d2) - road.edge);
+    }
+    return Math.max(0, best);
   }
 
   // ---- Delivery pad --------------------------------------------------------
