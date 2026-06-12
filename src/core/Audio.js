@@ -247,4 +247,19 @@ export class AudioManager {
   playTick(frac = 0) {
     this.#blip('square', 900 + frac * 500, 900 + frac * 500, 0.035, 0.045);
   }
+
+  // Perfect-streak fanfare: one rising note per streak step (Phase 6 combo).
+  playComboUp(streak = 1) {
+    const n = Math.max(1, Math.min(5, streak));
+    for (let i = 0; i < n; i++) {
+      const f = 659.25 * Math.pow(1.1892, i); // up a minor third each step
+      this.#blip('triangle', f, f, 0.22, 0.14, 0.35 + i * 0.09);
+    }
+  }
+
+  // The streak died: a sad descending womp-womp.
+  playComboBreak() {
+    this.#blip('sawtooth', 320, 240, 0.28, 0.1, 0.35);
+    this.#blip('sawtooth', 240, 130, 0.45, 0.12, 0.62);
+  }
 }

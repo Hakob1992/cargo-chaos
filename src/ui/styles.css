@@ -428,6 +428,42 @@ html, body {
 .r-route.risky { color: #ff9d66; }
 .hud-panel .route-label { font-size: 12px; letter-spacing: 1px; }
 
+/* ---------------- Combo streak (Phase 6) ---------------- */
+/* In-run chip: builds quietly, glows gold when the ×2 is live, snaps to a
+   broken state the moment the cargo takes its first scratch. */
+.hud-combo {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  font-weight: 800; font-size: 13px; letter-spacing: 1.5px;
+  padding: 6px 14px; border-radius: 999px;
+  background: rgba(20, 18, 26, 0.82); border: 1px solid rgba(255, 176, 34, 0.35);
+  color: #ffcf7a; pointer-events: none;
+}
+.hud-combo.active {
+  color: #1a1208; background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-color: rgba(255, 220, 140, 0.8);
+  box-shadow: 0 0 18px rgba(255, 176, 34, 0.45);
+  animation: comboGlow 1.4s ease-in-out infinite;
+}
+@keyframes comboGlow {
+  0%, 100% { box-shadow: 0 0 12px rgba(255, 176, 34, 0.35); }
+  50% { box-shadow: 0 0 24px rgba(255, 176, 34, 0.6); }
+}
+.hud-combo.lost {
+  color: #ff7a6a; border-color: rgba(214, 67, 31, 0.6); background: rgba(40, 14, 10, 0.85);
+  animation: comboSnap 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes comboSnap {
+  0%, 100% { transform: translateX(-50%); }
+  20% { transform: translateX(-50%) rotate(-3deg) scale(1.15); }
+  45% { transform: translateX(-50%) rotate(2.5deg); }
+  70% { transform: translateX(-50%) rotate(-1.5deg); }
+}
+
+/* Result-card combo verdict */
+.r-combo { font-size: 12.5px; font-weight: 800; letter-spacing: 1px; margin: 0 0 4px; color: #ffcf7a; }
+.r-combo.active { color: var(--accent); animation: starIn 0.4s ease 0.2s backwards; }
+.r-combo.broken { color: #ff7a6a; }
+
 /* ---------------- Garage: stars + gated deliveries ---------------- */
 .stars-total {
   font-family: var(--font-display); color: var(--accent); font-size: 18px;

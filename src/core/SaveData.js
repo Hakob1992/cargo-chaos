@@ -18,12 +18,16 @@ export class SaveData {
     this.upgrades = data.upgrades ?? {}; // id -> level (0 if absent)
     this.best = data.best ?? {};         // deliveryId -> best integrity
     this.stars = data.stars ?? {};       // deliveryId -> best star count (1..5)
+    this.combo = data.combo ?? 0;        // consecutive PERFECT deliveries (Phase 6)
   }
 
   save() {
     localStorage.setItem(
       KEY,
-      JSON.stringify({ money: this.money, upgrades: this.upgrades, best: this.best, stars: this.stars })
+      JSON.stringify({
+        money: this.money, upgrades: this.upgrades, best: this.best,
+        stars: this.stars, combo: this.combo,
+      })
     );
   }
 
@@ -70,6 +74,7 @@ export class SaveData {
     this.upgrades = {};
     this.best = {};
     this.stars = {};
+    this.combo = 0;
     this.save();
   }
 }

@@ -37,6 +37,7 @@ export class HUD {
       <div class="hud-warning hidden" data-warning>⚠ OFF ROAD — CARGO AT RISK!</div>
       <div class="hud-warning cargo-warning hidden" data-cargo-warn></div>
       <div class="hud-phew hidden" data-phew>😅 PHEW!</div>
+      <div class="hud-combo hidden" data-combo></div>
 
       <div class="touch-controls">
         <div class="dpad">
@@ -63,6 +64,9 @@ export class HUD {
     this.cargoWarnEl = this.el.querySelector('[data-cargo-warn]');
     this.phewEl = this.el.querySelector('[data-phew]');
     this._phewTimer = null;
+    this.comboEl = this.el.querySelector('[data-combo]');
+    this._combo = null;      // { count, at, mult } for the current run
+    this._comboLost = false; // flips the moment the cargo takes its first scratch
     this.pauseBtn = this.el.querySelector('[data-pause]');
     this.muteBtn = this.el.querySelector('[data-mute]');
     this.pauseIcon = this.el.querySelector('[data-pause-icon]');
@@ -129,6 +133,27 @@ export class HUD {
     this.warningEl.classList.toggle('hidden', !off);
   }
 
+  // Perfect-streak chip (Phase 6). Hidden at streak 0; shows progress while
+  // building, gold once the multiplier is live, and visibly BREAKS the moment
+  // the cargo takes its first scratch this run.
+  #renderCombo() {
+    const c = this._combo;
+    if (!c || (c.count <= 0 && !this._comboLost)) {
+      this.comboEl.classList.add('hidden');
+      return;
+    }
+    this.comboEl.classList.remove('hidden');
+    this.comboEl.classList.toggle('active', !this._comboLost && c.count >= c.at);
+    this.comboEl.classList.toggle('lost', this._comboLost);
+    if (this._comboLost) {
+      this.comboEl.textContent = '✖ COMBO LOST';
+    } else if (c.count >= c.at) {
+      this.comboEl.textContent = `🔥 COMBO ×${c.mult} — KEEP IT PERFECT`;
+    } else {
+      this.comboEl.textContent = `🔥 PERFECT STREAK ${c.count}/${c.at}`;
+    }
+  }
+
   // Near-miss relief: a quick "PHEW!" flash after the cargo almost went over.
   flashPhew() {
     if (!this.phewEl) return;
@@ -146,12 +171,15 @@ export class HUD {
     this.cargoWarnEl.classList.toggle('hidden', !msg);
   }
 
-  show(delivery, route = null) {
+  show(delivery, route = null, combo = null) {
     this.cargoEl.textContent = delivery.name;
     if (this.routeEl) {
       this.routeEl.textContent = route ? route.name : '—';
       this.routeEl.style.color = route && route.tag === 'RISKY' ? '#e08a3c' : '#7fd6a0';
     }
+    this._combo = combo;
+    this._comboLost = false;
+    this.#renderCombo();
     this.setDeliverable(false);
     this.setOffRoad(false);
     this.setCargoWarn(null);
@@ -166,6 +194,11 @@ export class HUD {
 
   update({ time, integrity, stage, speed, gear }) {
     this.timeEl.textContent = formatTime(time);
+    // First scratch = the streak is gone for this run; break the chip NOW.
+    if (!this._comboLost && integrity < 100 && this._combo && this._combo.count > 0) {
+      this._comboLost = true;
+      this.#renderCombo();
+    }
     // Condition bar: fill = remaining integrity, colour + label = stage.
     const pct = Math.max(0, Math.min(100, integrity));
     const col = stage === 'ruined' ? '#c0291c' : stage === 'damaged' ? '#cf7a16' : '#1f9d4f';

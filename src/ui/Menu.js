@@ -256,8 +256,25 @@ export class Menu {
     });
   }
 
+  // One-line combo verdict for the result card (Phase 6).
+  #comboLine(combo) {
+    if (!combo) return '';
+    if (combo.mult > 1) {
+      return `<div class="r-combo active">🔥 PERFECT ×${combo.count} — COMBO ×${combo.mult} PAYOUT!</div>`;
+    }
+    if (combo.count > 0) {
+      const left = combo.at - combo.count;
+      return `<div class="r-combo">🔥 PERFECT STREAK ${combo.count}/${combo.at} — ${left} more for ×2 pay</div>`;
+    }
+    if (combo.prev > 0) {
+      return `<div class="r-combo broken">✖ STREAK BROKEN (was ${combo.prev})</div>`;
+    }
+    return '';
+  }
+
   showResult({ delivery, integrity, rating, earnings, time, insured, failed = false, failReason = null,
-               stars = 1, breakdown = { condition: 0, time: 0, style: 0 }, totalStars = 0, route = null }) {
+               stars = 1, breakdown = { condition: 0, time: 0, style: 0 }, totalStars = 0, route = null,
+               combo = null }) {
     this.#disposeViewer();
     this.el.classList.remove('hidden');
     const cls = rating.toLowerCase();
@@ -282,6 +299,7 @@ export class Menu {
           <div class="r-title">${failed ? 'DELIVERY FAILED' : 'DELIVERY COMPLETE'}</div>
           <div class="r-cargo">${delivery.name}${reasonLabel ? ` — ${reasonLabel}` : ''}</div>
           ${route ? `<div class="r-route ${route.tag === 'RISKY' ? 'risky' : ''}">via ${route.name}${route.payoutMult > 1 ? ` · ×${route.payoutMult} PAY` : ''}</div>` : ''}
+          ${this.#comboLine(combo)}
           <div class="r-stars">${starRow}</div>
           ${isNewBest ? '<div class="r-newbest">NEW BEST!</div>' : ''}
           <div class="r-breakdown">

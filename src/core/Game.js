@@ -38,6 +38,9 @@ const PHEW_SCARE_TIP = 0.55;  // tipProgress that counts as a scare
 const PHEW_SCARE_TILT = 0.9;  // tilt (rad) that counts as a scare
 const PHEW_CALM_TIP = 0.15;   // recovered below this …
 const PHEW_CALM_TILT = 0.4;   // … and this → phew!
+// Phase 6 — combo multiplier: consecutive PERFECT (100% intact) deliveries.
+const COMBO_AT = 3;   // streak length where the multiplier kicks in
+const COMBO_MULT = 2; // payout multiplier while the streak holds
 
 export class Game {
   constructor() {
@@ -175,7 +178,7 @@ export class Game {
     this._scared = false;
     this.state = 'driving';
     this.menu.hide();
-    this.hud.show(delivery, this.route);
+    this.hud.show(delivery, this.route, { count: this.save.combo ?? 0, at: COMBO_AT, mult: COMBO_MULT });
     this.customer.bind(delivery);
     this.customer.onStart();
     this.#snapCamera();
@@ -196,7 +199,20 @@ export class Game {
     const payoutFrac = Math.max(rating.payout, floor);
     // The risky route pays a bonus on whatever survives the trip.
     const routeMult = this.route?.payoutMult ?? 1;
-    const earnings = Math.round(this.activeDelivery.reward * payoutFrac * routeMult);
+
+    // Phase 6 — perfect-streak combo: a 100%-intact delivery extends the
+    // streak; ANY damage or failure resets it. From the COMBO_AT-th perfect
+    // onward the payout doubles (stacks with the route bonus).
+    const wasPerfect = !failed && integrity >= 100;
+    const prevCombo = this.save.combo ?? 0;
+    const combo = wasPerfect ? prevCombo + 1 : 0;
+    const comboMult = wasPerfect && combo >= COMBO_AT ? COMBO_MULT : 1;
+    this.save.combo = combo;
+    this.save.save();
+    if (wasPerfect) this.audio.playComboUp(Math.min(combo, 5));
+    else if (prevCombo >= 2) this.audio.playComboBreak(); // a real streak died
+
+    const earnings = Math.round(this.activeDelivery.reward * payoutFrac * routeMult * comboMult);
 
     // Star rating from three inputs: condition, time vs par, and clean style.
     const score = this.#computeStars(integrity, failed);
@@ -219,6 +235,7 @@ export class Game {
       breakdown: { condition: score.condition, time: score.time, style: score.style },
       totalStars: this.save.totalStars(),
       route: this.route,
+      combo: { count: combo, prev: prevCombo, mult: comboMult, at: COMBO_AT },
     });
   }
 
