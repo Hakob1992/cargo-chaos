@@ -478,3 +478,27 @@ html, body {
 .delivery-card .d-stars { letter-spacing: 2px; color: var(--accent); font-size: 13px; margin-top: 4px; }
 .delivery-card .d-lock { color: var(--muted); font-size: 11px; margin-top: 4px; }
 .delivery-card.locked { opacity: 0.55; filter: grayscale(0.6); cursor: not-allowed; }
+
+/* ---------------- GSAP cinematics: countdown + celebration ---------------- */
+.countdown {
+  position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  font-family: var(--font-display, sans-serif); font-weight: 900;
+  font-size: clamp(80px, 16vw, 220px); line-height: 1;
+  color: #fff; -webkit-text-stroke: 4px #1c2433;
+  text-shadow: 0 8px 0 rgba(0, 0, 0, 0.25), 0 0 40px rgba(255, 255, 255, 0.5);
+  pointer-events: none; z-index: 60; will-change: transform, opacity;
+}
+.countdown.go { color: var(--accent, #ffd34e); -webkit-text-stroke: 5px #1c2433; }
+
+.celebrate-layer {
+  position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 55;
+}
+.confetti {
+  position: absolute; top: 0; left: 0; width: 12px; height: 16px; border-radius: 2px;
+  will-change: transform, opacity;
+}
+.confetti.coin {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff2a8, #ffce3a 55%, #d99a1e);
+  box-shadow: 0 0 8px rgba(255, 206, 58, 0.6);
+}

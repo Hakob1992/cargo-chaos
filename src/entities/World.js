@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { gsap } from 'gsap';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RAPIER } from '../core/Physics.js';
@@ -59,7 +60,40 @@ export class World {
     this.#buildRoads();
     this.#buildDeliveryPad();
     this.#buildScenery();
+    this.#animateAmbient();
     this.setActiveRoute('highway');
+  }
+
+  // ---- Ambient motion (GSAP) -----------------------------------------------
+  // Slow, looping life: clouds drift + bob across the sky, the signpost creaks
+  // in the wind, and the delivery-pad ring pulses like a "land here" beacon.
+  #animateAmbient() {
+    (this.clouds || []).forEach((s, i) => {
+      const x0 = s.position.x;
+      gsap.to(s.position, {
+        x: x0 + 60 + i * 6, duration: 26 + i * 3,
+        ease: 'sine.inOut', yoyo: true, repeat: -1,
+      });
+      gsap.to(s.position, {
+        y: s.position.y + 3, duration: 7 + (i % 4),
+        ease: 'sine.inOut', yoyo: true, repeat: -1, delay: i * 0.4,
+      });
+    });
+
+    if (this.signpost) {
+      gsap.to(this.signpost.rotation, {
+        z: 0.025, duration: 2.6, ease: 'sine.inOut', yoyo: true, repeat: -1,
+      });
+    }
+
+    if (this.deliveryRing) {
+      gsap.to(this.deliveryRing.scale, {
+        x: 1.12, y: 1.12, duration: 1.1, ease: 'sine.inOut', yoyo: true, repeat: -1,
+      });
+      gsap.to(this.deliveryRing.material, {
+        emissiveIntensity: 1.4, duration: 1.1, ease: 'sine.inOut', yoyo: true, repeat: -1,
+      });
+    }
   }
 
   // ---- Terrain height (2D fbm value-noise) --------------------------------
@@ -189,11 +223,13 @@ export class World {
     const tex = this.#makeCloudTexture();
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.95 });
     const rng = mulberry32(99);
+    this.clouds = [];
     for (let i = 0; i < 10; i++) {
       const s = new THREE.Sprite(mat);
       s.position.set((rng() - 0.5) * 500, 55 + rng() * 30, (rng()) * 360 - 30);
       const sc = 60 + rng() * 70; s.scale.set(sc, sc * 0.55, 1);
       this.scene.add(s);
+      this.clouds.push(s);
     }
   }
 
@@ -319,11 +355,10 @@ export class World {
 
     // Ribbons: highway wide & forgiving, shortcut narrow & mean (lifted a hair
     // so the overlapping fork joint doesn't z-fight).
-    // Stem + highway are paved asphalt (lane markings); the Farm Shortcut stays
-    // a rough dirt backroad — the look reinforces the risk/reward contrast.
+    // All three ribbons are paved asphalt with lane markings.
     this.stemLen = this.#ribbon(stemS, 4.0, 4.8, 0, true);
     this.hwLen = this.#ribbon(hwS, 4.2, 5.4, 0, true);
-    this.scLen = this.#ribbon(scS, 2.6, 3.4, 0.012, false);
+    this.scLen = this.#ribbon(scS, 2.6, 3.4, 0.012, true);
 
     // Per-road drivable info for off-road queries: edge = half-width + grace.
     this._roads = [
@@ -579,6 +614,7 @@ export class World {
     mkPlank('HIGHWAY →', hwS[10], 2.6, '#1f7a44');
     mkPlank('SHORTCUT →', scS[10], 2.0, '#b23a1e');
     this.scene.add(g);
+    this.signpost = g;
   }
 
   // ---- Route selection (Phase 5 API) -------------------------------------------

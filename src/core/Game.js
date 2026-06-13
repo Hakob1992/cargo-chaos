@@ -16,6 +16,7 @@ import { Menu } from '../ui/Menu.js';
 import { Customer } from '../ui/Customer.js';
 import { WheelParticles } from '../entities/WheelParticles.js';
 import { VintageFX } from './VintageFX.js';
+import { Cinematics } from './Cinematics.js';
 
 const FIXED = 1 / 60;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -85,6 +86,9 @@ export class Game {
 
     this.menu = new Menu(document.getElementById('ui-root'), this);
     this.customer = new Customer(document.getElementById('ui-root'));
+    // GSAP cinematics own the camera during the run-start sweep + countdown.
+    this.cinematic = false;
+    this.cinematics = new Cinematics(this);
 
     this.camTarget = new THREE.Vector3();
     this.camDesired = new THREE.Vector3();
@@ -182,7 +186,24 @@ export class Game {
     this.hud.show(delivery, this.route, { count: this.save.combo ?? 0, at: COMBO_AT, mult: COMBO_MULT });
     this.customer.bind(delivery);
     this.customer.onStart();
+
+    // Settle the truck onto the road (a few neutral physics steps) so the
+    // cinematic orbits a grounded truck, not one frozen mid-spawn.
+    const neutral = this.input.state;
+    for (let i = 0; i < 16; i++) {
+      this.truck.applyGrip(this.world.gripAt(this.truck.position));
+      this.truck.update(neutral, FIXED);
+      this.truck.capturePreStepState();
+      this.cargo.capturePreStepState();
+      this.physics.step();
+      this.cargo.update(FIXED);
+    }
+    this.truck.sync(0);
+    this.cargo.sync(0);
     this.#snapCamera();
+
+    // Hand the camera to GSAP for the orbit-sweep + 3·2·1·GO! countdown.
+    this.cinematics.runStart();
   }
 
   finishDelivery(failed = false) {
@@ -253,6 +274,13 @@ export class Game {
       combo: { count: combo, prev: prevCombo, mult: comboMult, at: COMBO_AT },
       tip: { persona, timeVerdict, mult: customerMult },
     });
+
+    // Confetti + coin burst for a delivered (not wrecked) load — bigger on a
+    // flawless run, a combo, or a fast-bonus tip.
+    if (!failed) {
+      const big = wasPerfect || comboMult > 1 || customerMult > 1;
+      this.cinematics.celebrate({ big });
+    }
   }
 
   // Map a finished run to 1–5 stars. condition (cargo intact) is weighted
@@ -283,6 +311,7 @@ export class Game {
 
   #teardownRun() {
     this.paused = false;
+    if (this.cinematics) this.cinematics.cancel();
     this.audio.stopEngine();
     this.audio.setTension(0);
     if (this.customer) this.customer.hide();
@@ -311,7 +340,7 @@ export class Game {
     if (this.input.consumeMute()) this.toggleMute();
     if (this.input.consumePause()) this.togglePause();
 
-    if (this.state === 'driving' && !this.paused) {
+    if (this.state === 'driving' && !this.paused && !this.cinematic) {
       if (this.hitstop > 0) {
         // Freeze-frame: hold the whole sim for a beat so the hit registers.
         // The camera keeps easing (below) so it reads as impact, not a hang.
@@ -554,6 +583,8 @@ export class Game {
   }
 
   #updateCamera(dt) {
+    // While a cinematic plays, GSAP drives the camera — stand down.
+    if (this.cinematic) return;
     if (this.state !== 'driving' || !this.truck) return;
     this.#computeCamDesired();
     const k = 1 - Math.pow(0.001, dt); // frame-rate independent smoothing
