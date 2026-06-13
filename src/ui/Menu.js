@@ -6,6 +6,16 @@ import { ROUTES } from '../data/routes.js';
 import { formatTime } from './HUD.js';
 import { VehicleViewer } from './VehicleViewer.js';
 
+// Icons for the garage cards (emoji stand-ins until art is authored).
+const CARGO_ICONS = {
+  boxes: '📦', glass: '🪟', fishtank: '🐠', cake: '🎂', barrels: '🛢️',
+  'dino-egg': '🥚', artifact: '👽', nuke: '☢️', dragon: '🐉',
+};
+const UPGRADE_ICONS = {
+  engine: '⚙️', tires: '🛞', suspension: '🔩', shocks: '🪛', straps: '🪢', insurance: '🛡️',
+};
+const VEHICLE_ICONS = ['🛻', '🚐', '🚚', '🚛', '🛸', '🚀'];
+
 // ---- Result-screen feel tunables --------------------------------------------
 const STAR_FIRST_DELAY_MS = 250; // pause before the first star slams in
 const STAR_STAGGER_MS = 250;     // gap between star slams (matches the CSS delays)
@@ -40,17 +50,18 @@ export class Menu {
     this.el.classList.remove('hidden');
     this.el.innerHTML = `
       <div class="garage">
+        <div class="garage-bg"></div>
         <header class="title-bar">
-          <div class="logo">CARGO <span>CHAOS</span><small>DELIVER IT, DON'T DESTROY IT!</small></div>
+          <div class="logo"><span class="logo-mark">🚀</span>CARGO <span>CHAOS</span></div>
           <div class="header-right">
             <button class="reset-btn" data-reset>RESET PROGRESS</button>
-            <div class="stars-total">★ ${this.save.totalStars()}</div>
-            <div class="money">$ ${this.save.money.toLocaleString()}</div>
+            <div class="stat-pill stars"><span class="pi">★</span> ${this.save.totalStars()}</div>
+            <div class="stat-pill money"><span class="pi">$</span> ${this.save.money.toLocaleString()}</div>
           </div>
         </header>
 
         <section class="panel showroom-panel">
-          <h2>GARAGE</h2>
+          <div class="panel-label">GARAGE</div>
           <div class="showroom">
             <button class="sr-arrow" data-sr-prev aria-label="Previous vehicle">&#8249;</button>
             <div class="sr-stage"></div>
@@ -59,8 +70,9 @@ export class Menu {
           <div class="sr-info">
             <div class="sr-name"></div>
             <div class="sr-status"></div>
+            <div class="sr-bar"></div>
+            <div class="sr-hint">Drag to rotate · scroll to zoom</div>
           </div>
-          <div class="sr-hint">Drag to rotate · scroll to zoom</div>
         </section>
 
         <div class="garage-grid">
@@ -72,7 +84,10 @@ export class Menu {
           <section class="panel">
             <h2>UPGRADES</h2>
             <div class="upgrades"></div>
-            <h2 class="vehicles-h">VEHICLES</h2>
+          </section>
+
+          <section class="panel vehicles-panel">
+            <h2>VEHICLES</h2>
             <div class="vehicles"></div>
           </section>
         </div>
@@ -151,13 +166,16 @@ export class Menu {
       card.className = 'delivery-card' + (locked ? ' locked' : '');
       card.style.setProperty('--cargo-color', '#' + d.color.toString(16).padStart(6, '0'));
       card.innerHTML = `
-        <div class="swatch"></div>
+        <div class="d-icon">${CARGO_ICONS[d.id] ?? '📦'}</div>
         <div class="d-name">${d.name}</div>
         <div class="d-tag">${d.tag}</div>
-        <div class="d-reward">$ ${d.reward.toLocaleString()}</div>
-        ${locked
-          ? `<div class="d-lock">🔒 ★ ${gate} to unlock</div>`
-          : `<div class="d-stars">${starGlyphs}</div>`}
+        <div class="d-foot">
+          <span class="d-reward">$ ${d.reward.toLocaleString()}</span>
+          ${locked
+            ? `<span class="d-lock">🔒 ★ ${gate}</span>`
+            : `<span class="d-stars">${starGlyphs}</span>`}
+        </div>
+        ${locked ? '<div class="d-lockveil">🔒</div>' : ''}
       `;
       if (locked) {
         card.disabled = true;
@@ -231,6 +249,7 @@ export class Menu {
       const row = document.createElement('div');
       row.className = 'upgrade-row';
       row.innerHTML = `
+        <div class="u-icon">${UPGRADE_ICONS[u.id] ?? '🔧'}</div>
         <div class="u-info">
           <div class="u-name">${u.name} <span class="u-lvl">Lv ${level}${maxed ? ' · MAX' : ''}</span></div>
           <div class="u-desc">${u.desc}</div>
@@ -261,8 +280,11 @@ export class Menu {
       const chip = document.createElement('button');
       chip.className = 'vehicle-chip' + (v.playable ? ' owned' : ' locked');
       chip.innerHTML = `
-        <span class="v-name">${v.name}</span>
-        <span class="v-status">${v.playable ? 'ACTIVE' : 'LOCKED · $' + v.unlockCost.toLocaleString()}</span>
+        <span class="v-icon">${VEHICLE_ICONS[i] ?? '🚚'}</span>
+        <span class="v-text">
+          <span class="v-name">${v.name}</span>
+          <span class="v-status">${v.playable ? 'ACTIVE' : '🔒 $' + v.unlockCost.toLocaleString()}</span>
+        </span>
       `;
       // Clicking a chip previews that vehicle in the 3D showroom.
       chip.addEventListener('click', () => this.#showVehicleAt(i));
