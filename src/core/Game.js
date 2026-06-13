@@ -368,7 +368,21 @@ export class Game {
     }
 
     this.#updateCamera(dt);
-    this.fx.render(this.clock.elapsedTime);
+    // Guard against a post-processing failure (e.g. an unsupported depth-texture
+    // format on some mobile GPUs) painting a black screen: on the first throw,
+    // disable the FX layer and fall back to a plain render for the rest of the
+    // session so the game stays visible.
+    try {
+      this.fx.render(this.clock.elapsedTime);
+    } catch (err) {
+      if (!this._fxFailed) {
+        console.warn('VintageFX disabled after render error — falling back to plain render.', err);
+        this._fxFailed = true;
+        this.fx.enabled = false;
+      }
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   // Pause only matters mid-drive: freeze the sim and silence the engine.

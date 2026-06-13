@@ -577,7 +577,9 @@ html, body {
   .hud-warning, .hud-combo, .hud-phew { font-size: 13px; }
 
   /* ---- Result card: compact so RETRY/GARAGE are never cut off ---- */
-  .result-card { box-sizing: border-box; width: min(340px, 64vw); padding: 12px 18px; max-height: 92vh; overflow-y: auto; }
+  /* dvh = visible height minus the browser toolbars (vh ignores them on iOS,
+     which left the card taller than the screen and cut off the buttons). */
+  .result-card { box-sizing: border-box; width: min(340px, 64vw); padding: 12px 18px; max-height: 90vh; max-height: 90dvh; overflow-y: auto; }
   .result-card .r-title, .result-card.is-failed .r-title { font-size: 15px; letter-spacing: 1px; }
   .r-cargo { font-size: 14px; margin: 2px 0 5px; }
   .r-route, .r-tip, .r-combo { font-size: 11px; margin-bottom: 2px; }
@@ -592,7 +594,13 @@ html, body {
   .r-stats { margin-bottom: 8px; }
   .r-stats b { font-size: 14px; }
   .r-stats span { font-size: 10px; }
-  .r-money { font-size: 13px; margin-bottom: 10px; }
+  .r-money { font-size: 13px; margin-bottom: 8px; }
+  /* Pin RETRY/GARAGE to the card bottom so they're always visible/tappable
+     even if the rest of the card has to scroll on a very short screen. */
+  .r-actions {
+    position: sticky; bottom: 0; background: var(--panel);
+    padding-top: 8px; margin-top: 2px; box-shadow: 0 -10px 12px -6px var(--panel);
+  }
   .r-actions button { padding: 9px; font-size: 13px; }
 
   /* ---- Touch controls (joystick + buttons) ---- */
@@ -608,7 +616,7 @@ html, body {
      on the right scrolling WITHIN its own panel. ---- */
   .menu { overflow: hidden; }
   .garage {
-    height: 100vh; max-width: none; margin: 0; padding: 8px 12px; box-sizing: border-box;
+    height: 100vh; height: 100dvh; max-width: none; margin: 0; padding: 8px 12px; box-sizing: border-box;
     display: grid; gap: 8px 12px;
     grid-template-columns: 0.82fr 1.18fr;
     grid-template-rows: auto minmax(0, 1fr);

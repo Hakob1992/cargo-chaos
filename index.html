@@ -7,8 +7,42 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#4fa9e8" />
     <title>Cargo Chaos — Deliver It, Don't Destroy It!</title>
+    <!-- Critical inline styles for the loading screen so it shows immediately,
+         while the (large) JS bundle is still downloading. -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #12121a; }
+      #loading {
+        position: fixed; inset: 0; z-index: 500; display: grid; place-items: center;
+        background: radial-gradient(120% 120% at 50% 0%, #20283a 0%, #0d0d14 70%);
+        color: #fff; font-family: system-ui, sans-serif; transition: opacity 0.45s ease;
+      }
+      #loading.done { opacity: 0; pointer-events: none; }
+      #loading .ld-logo {
+        font-size: clamp(34px, 7vw, 56px); font-weight: 900; letter-spacing: 1px;
+        text-shadow: 0 4px 0 rgba(0,0,0,0.3);
+      }
+      #loading .ld-logo span { color: #ffb022; }
+      #loading .ld-sub { font-size: 12px; letter-spacing: 3px; color: #8a93a6; margin: 6px 0 26px; text-transform: uppercase; }
+      #loading .ld-bar {
+        width: min(320px, 70vw); height: 12px; border-radius: 8px;
+        background: rgba(255,255,255,0.12); overflow: hidden;
+      }
+      #loading .ld-fill {
+        height: 100%; width: 0%; border-radius: 8px;
+        background: linear-gradient(90deg, #ffb022, #ff7a18); transition: width 0.25s ease;
+      }
+      #loading .ld-tip { margin-top: 14px; font-size: 12px; color: #8a93a6; min-height: 16px; }
+    </style>
   </head>
   <body>
+    <div id="loading">
+      <div style="text-align:center">
+        <div class="ld-logo">CARGO <span>CHAOS</span></div>
+        <div class="ld-sub">Deliver it, don't destroy it!</div>
+        <div class="ld-bar"><div class="ld-fill" id="ld-fill"></div></div>
+        <div class="ld-tip" id="ld-tip">Loading…</div>
+      </div>
+    </div>
     <canvas id="game-canvas"></canvas>
     <div id="ui-root"></div>
     <div id="rotate-gate">
