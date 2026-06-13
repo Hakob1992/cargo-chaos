@@ -549,3 +549,89 @@ html, body {
   background: radial-gradient(circle at 35% 30%, #fff2a8, #ffce3a 55%, #d99a1e);
   box-shadow: 0 0 8px rgba(255, 206, 58, 0.6);
 }
+
+/* ================= Mobile landscape: fit the short viewport =================
+   Phones in landscape have a very short height (the browser chrome eats more).
+   Scale the in-run HUD down and compact the garage so it fits with little/no
+   scroll. Scoped to short landscape viewports so desktop is untouched. */
+@media (orientation: landscape) and (max-height: 600px) {
+  /* ---- In-run HUD ---- */
+  .hud-panel { top: 10px; left: 10px; padding: 6px 10px; min-width: 0; border-width: 3px; border-radius: 11px; }
+  .hud-panel .row { gap: 10px; padding: 1px 0; }
+  .hud-panel .label { font-size: 10px; }
+  .hud-panel .val { font-size: 12px; }
+  .hud-panel .route-label { font-size: 10px; }
+  .cond-bar { height: 9px; border-width: 2px; margin: 1px 0 4px; }
+
+  /* Top-centre on mobile so it doesn't collide with the bottom-right brake. */
+  .speedo { width: 74px; height: 74px; border-width: 4px; top: 8px; left: 50%; right: auto; bottom: auto; transform: translateX(-50%); }
+  .speedo .speed { font-size: 26px; }
+  .speedo .speed-unit { font-size: 9px; margin-top: 0; }
+  .speedo .gear { font-size: 9px; padding: 2px 8px; bottom: -6px; border-width: 2px; }
+  .speedo .gear::before { font-size: 8px; }
+
+  .hud-buttons { top: 10px; right: 12px; }
+  .hud-icon-btn { width: 38px; height: 38px; font-size: 15px; }
+  .hud-deliver { top: 10px; font-size: 13px; }
+  .hud-warning, .hud-combo, .hud-phew { font-size: 13px; }
+
+  /* ---- Touch controls (joystick + buttons) ---- */
+  .joystick { width: 104px; height: 104px; bottom: 14px; left: 14px; }
+  .joy-knob { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+  .joy-hint { font-size: 10px; bottom: -15px; }
+  .touch-right { bottom: 14px; right: 14px; gap: 10px; }
+  .tc-recover { width: 50px; height: 50px; font-size: 20px; }
+  .tc-brake { width: 78px; height: 64px; font-size: 13px; }
+
+  /* ---- Garage: a viewport-height landscape layout so the PAGE never scrolls.
+     Title across the top, 3D showroom on the left, the delivery/upgrade list
+     on the right scrolling WITHIN its own panel. ---- */
+  .menu { overflow: hidden; }
+  .garage {
+    height: 100vh; max-width: none; margin: 0; padding: 8px 12px; box-sizing: border-box;
+    display: grid; gap: 8px 12px;
+    grid-template-columns: 0.82fr 1.18fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "title title" "showroom content";
+  }
+  .title-bar { grid-area: title; margin: 0; }
+  .logo { font-size: 20px; }
+  .logo small { font-size: 9px; margin-top: 1px; letter-spacing: 1px; }
+  .header-right { gap: 8px; }
+  .money { font-size: 15px; padding: 5px 12px; }
+  .reset-btn { font-size: 10px; padding: 6px 9px; }
+  .stars-total { font-size: 14px; }
+
+  .showroom-panel { grid-area: showroom; margin: 0; overflow: hidden auto; min-height: 0; display: flex; flex-direction: column; }
+  .garage-grid { grid-area: content; grid-template-columns: 1fr; gap: 8px; overflow: hidden auto; min-height: 0; align-content: start; }
+  .panel { padding: 10px 12px; }
+  .panel h2 { font-size: 11px; margin-bottom: 8px; }
+  .panel h2.vehicles-h { margin-top: 12px; }
+  .sr-stage { height: 130px; }
+  .sr-arrow { flex-basis: 30px; width: 30px; font-size: 18px; }
+  .sr-info { margin-top: 6px; }
+  .sr-name { font-size: 15px; }
+  .sr-status { font-size: 10px; }
+  .sr-hint { display: none; }
+
+  .deliveries { grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 8px; }
+  .delivery-card { padding: 8px; }
+  .delivery-card .swatch { height: 26px; margin-bottom: 6px; }
+  .delivery-card .d-name { font-size: 12px; }
+  .delivery-card .d-tag { font-size: 9px; margin: 1px 0 4px; }
+  .delivery-card .d-reward { font-size: 13px; }
+  .delivery-card .d-stars { font-size: 11px; margin-top: 2px; }
+  .delivery-card .d-lock { font-size: 9px; }
+
+  .upgrade-row { padding: 6px 0; gap: 8px; }
+  .u-name { font-size: 12px; }
+  .u-desc { font-size: 10px; margin: 1px 0 4px; }
+  .u-bar span { width: 16px; height: 5px; }
+  .u-buy { padding: 6px 10px; min-width: 62px; font-size: 12px; }
+
+  .vehicle-chip { padding: 6px 9px; }
+  .vehicle-chip .v-name { font-size: 11px; }
+  .vehicle-chip .v-status { font-size: 9px; }
+
+  .hint { display: none; }
+}
