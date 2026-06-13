@@ -213,6 +213,47 @@ export class World {
 
   // ---- Textures ------------------------------------------------------------
 
+  // Procedural cartoon asphalt: gray base with speckle + faint cracks, a dashed
+  // yellow centre line, and white edge lines. U is clamped (markings stay put
+  // across the width) and V repeats (dashes tile down the length). One tile is
+  // 260 px = 2 dash cycles, so dashes line up seamlessly across tiles.
+  #asphaltTexture() {
+    if (this._asphaltTex) return this._asphaltTex;
+    const W = 128, H = 260;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    const rng = mulberry32(7);
+    // Base + speckle for a hand-painted asphalt grain.
+    ctx.fillStyle = '#73767e'; ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 2600; i++) {
+      const x = rng() * W, y = rng() * H, s = rng() * 1.5 + 0.4;
+      const d = Math.floor((rng() - 0.5) * 44);
+      ctx.fillStyle = `rgba(${112 + d},${115 + d},${123 + d},0.5)`;
+      ctx.fillRect(x, y, s, s);
+    }
+    // A few faint cracks (nods to the cracked-street reference).
+    ctx.strokeStyle = 'rgba(42,44,50,0.45)'; ctx.lineWidth = 1.4;
+    for (let i = 0; i < 5; i++) {
+      let x = rng() * W, y = rng() * H; ctx.beginPath(); ctx.moveTo(x, y);
+      const segs = 3 + Math.floor(rng() * 3);
+      for (let j = 0; j < segs; j++) { x += (rng() - 0.5) * 38; y += (rng() - 0.5) * 70; ctx.lineTo(x, y); }
+      ctx.stroke();
+    }
+    // White edge lines, inset slightly from each side.
+    ctx.fillStyle = '#eceae3';
+    ctx.fillRect(7, 0, 5, H); ctx.fillRect(W - 12, 0, 5, H);
+    // Dashed yellow centre line — period 130 px (dash 70, gap 60).
+    ctx.fillStyle = '#f4c542';
+    for (let y = 0; y < H; y += 130) ctx.fillRect(W / 2 - 4, y, 8, 70);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 4;
+    this._asphaltTex = tex;
+    return tex;
+  }
+
   #tex(file, rx = 1, ry = 1) {
     const t = new THREE.TextureLoader().load(`./textures/${file}`);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -278,9 +319,11 @@ export class World {
 
     // Ribbons: highway wide & forgiving, shortcut narrow & mean (lifted a hair
     // so the overlapping fork joint doesn't z-fight).
-    this.stemLen = this.#ribbon(stemS, 4.0, 4.8, 0);
-    this.hwLen = this.#ribbon(hwS, 4.2, 5.4, 0);
-    this.scLen = this.#ribbon(scS, 2.6, 3.4, 0.012);
+    // Stem + highway are paved asphalt (lane markings); the Farm Shortcut stays
+    // a rough dirt backroad — the look reinforces the risk/reward contrast.
+    this.stemLen = this.#ribbon(stemS, 4.0, 4.8, 0, true);
+    this.hwLen = this.#ribbon(hwS, 4.2, 5.4, 0, true);
+    this.scLen = this.#ribbon(scS, 2.6, 3.4, 0.012, false);
 
     // Per-road drivable info for off-road queries: edge = half-width + grace.
     this._roads = [
@@ -296,7 +339,7 @@ export class World {
     // A road-coloured disc at the junction masks the three ribbon seams.
     const patch = new THREE.Mesh(
       new THREE.CircleGeometry(7, 24),
-      new THREE.MeshStandardMaterial({ color: 0xd9a85f, roughness: 1 })
+      new THREE.MeshStandardMaterial({ color: 0x73767e, roughness: 0.95 })
     );
     patch.rotation.x = -Math.PI / 2;
     patch.position.set(this.forkPos.x, this.terrainY(this.forkPos.x, this.forkPos.z) + this.roadLift + 0.006, this.forkPos.z);
@@ -317,7 +360,7 @@ export class World {
   // Build one road ribbon (mesh + trimesh collider) along `samples`, with the
   // half-width pinching from hwMax on straights to hwMin in tight corners.
   // Returns the centreline length in metres.
-  #ribbon(samples, hwMin, hwMax, lift) {
+  #ribbon(samples, hwMin, hwMax, lift, paved = true) {
     const N = samples.length - 1;
     const hwArr = new Array(N + 1);
     for (let i = 0; i <= N; i++) {
@@ -343,8 +386,11 @@ export class World {
         c.x + perp.x * hw, y, c.z + perp.z * hw,
         c.x - perp.x * hw, y, c.z - perp.z * hw
       );
-      const v = dist / 8;
-      uvs.push(hw / 8, v, -hw / 8, v);
+      // Width-normalised U (0=one edge, 1=other, 0.5=centreline) so lane
+      // markings always track the road; V runs along the length (one asphalt
+      // tile per 16 m → a dashed centre line every ~8 m).
+      const v = dist / 16;
+      uvs.push(0, v, 1, v);
     }
     const indices = [];
     for (let i = 0; i < N; i++) {
@@ -356,12 +402,12 @@ export class World {
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    // Flat sunny packed-dirt — the road.png texture rendered near-black, which
-    // fought the bright palette. A solid warm tan reads as a cheerful backroad
-    // and suits the candy-cartoon look.
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      color: 0xd9a85f, roughness: 1, side: THREE.DoubleSide,
-    }));
+    // Paved roads get the procedural asphalt (gray + dashed yellow centre line
+    // + white edges); the dirt shortcut gets a flat warm tan.
+    const mat = paved
+      ? new THREE.MeshStandardMaterial({ map: this.#asphaltTexture(), roughness: 0.95, side: THREE.DoubleSide })
+      : new THREE.MeshStandardMaterial({ color: 0xd9a85f, roughness: 1, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
 
