@@ -157,9 +157,9 @@ export class World {
   // ---- Lighting / sky ------------------------------------------------------
 
   #buildLighting() {
-    const hemi = new THREE.HemisphereLight(0xfff2d6, 0x8a9a5a, 1.3);
+    const hemi = new THREE.HemisphereLight(0xcfeaff, 0x9fc26a, 1.25);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff0cf, 2.0);
+    const sun = new THREE.DirectionalLight(0xfff6e0, 2.1);
     sun.position.set(60, 90, 30);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -169,7 +169,7 @@ export class World {
     sun.shadow.camera.far = 360;
     this.scene.add(sun);
 
-    this.scene.fog = new THREE.Fog(0xe8cba6, 90, 360);
+    this.scene.fog = new THREE.Fog(0xcfeaff, 130, 480);
     this.scene.background = this.#makeSkyTexture();
     this.#buildClouds();
   }
@@ -178,8 +178,8 @@ export class World {
     const c = document.createElement('canvas'); c.width = 16; c.height = 256;
     const ctx = c.getContext('2d');
     const g = ctx.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0.0, '#acc4d6'); g.addColorStop(0.45, '#cfd2c9');
-    g.addColorStop(0.72, '#eccfa6'); g.addColorStop(1.0, '#f0d6ad');
+    g.addColorStop(0.0, '#4fa9e8'); g.addColorStop(0.45, '#86c9f2');
+    g.addColorStop(0.78, '#c2e8fb'); g.addColorStop(1.0, '#e8f6ff');
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
@@ -205,8 +205,8 @@ export class World {
     for (let i = 0; i < n; i++) lobes.push({ a: Math.PI + (i / (n - 1)) * Math.PI, d: 0.85 + Math.random() * 0.25, s: 0.55 + Math.random() * 0.35 });
     for (let i = 0; i < 4; i++) lobes.push({ a: 0.2 + (i / 3) * 2.7, d: 0.55, s: 0.6 });
     const xy = (l) => [cx + Math.cos(l.a) * l.d * baseR * 2.4, cy + Math.sin(l.a) * l.d * baseR];
-    ctx.fillStyle = '#3a2c1a'; for (const l of lobes) { const [x, y] = xy(l); ctx.beginPath(); ctx.arc(x, y, l.s * baseR + outline, 0, 7); ctx.fill(); }
-    ctx.fillStyle = '#efe2c6'; for (const l of lobes) { const [x, y] = xy(l); ctx.beginPath(); ctx.arc(x, y, l.s * baseR, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#5b8fb5'; for (const l of lobes) { const [x, y] = xy(l); ctx.beginPath(); ctx.arc(x, y, l.s * baseR + outline, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#ffffff'; for (const l of lobes) { const [x, y] = xy(l); ctx.beginPath(); ctx.arc(x, y, l.s * baseR, 0, 7); ctx.fill(); }
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }
@@ -250,7 +250,7 @@ export class World {
     geo.setIndex(indices);
     geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      map: this.#tex('grass.png'), color: 0xa9be86, roughness: 1,
+      map: this.#tex('grass.png'), color: 0x8ccf5a, roughness: 1,
     }));
     mesh.receiveShadow = true;
     this.scene.add(mesh);
@@ -296,7 +296,7 @@ export class World {
     // A road-coloured disc at the junction masks the three ribbon seams.
     const patch = new THREE.Mesh(
       new THREE.CircleGeometry(7, 24),
-      new THREE.MeshStandardMaterial({ color: 0xb89a72, roughness: 1 })
+      new THREE.MeshStandardMaterial({ color: 0xd9a85f, roughness: 1 })
     );
     patch.rotation.x = -Math.PI / 2;
     patch.position.set(this.forkPos.x, this.terrainY(this.forkPos.x, this.forkPos.z) + this.roadLift + 0.006, this.forkPos.z);
@@ -356,9 +356,11 @@ export class World {
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    // Tinted tan so the asphalt-crack texture reads as a packed-dirt backroad.
+    // Flat sunny packed-dirt — the road.png texture rendered near-black, which
+    // fought the bright palette. A solid warm tan reads as a cheerful backroad
+    // and suits the candy-cartoon look.
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      map: this.#tex('road.png'), color: 0xb89a72, roughness: 1, side: THREE.DoubleSide,
+      color: 0xd9a85f, roughness: 1, side: THREE.DoubleSide,
     }));
     mesh.receiveShadow = true;
     this.scene.add(mesh);

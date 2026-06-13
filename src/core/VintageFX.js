@@ -40,20 +40,21 @@ export class VintageFX {
     this.target.texture.colorSpace = THREE.SRGBColorSpace;
 
     // Style parameters — exposed for live tuning.
-    // Painterly soft-toon look: thin warm outlines, near-smooth shading, gentle
-    // warm grade, and atmospheric depth haze that fades distance into the horizon.
+    // Bright sunny-cartoon look: keep the soft cel outlines + posterized shading
+    // for a cartoon identity, but grade toward vivid, cheerful daylight (no aged
+    // sepia) with a light sky-blue depth haze instead of a muddy warm one.
     this.params = {
       outlineThickness: 1.1,   // px scale of the depth-edge sampling
       outlineStrength: 0.42,   // soft, not heavy ink
       outlineThreshold: 0.24,  // only strong silhouettes get a line
-      posterizeLevels: 24.0,   // high = near-smooth gradient shading
-      sepiaStrength: 0.12,     // just a whisper of warmth
-      grainStrength: 0.018,    // very subtle paper texture
-      vignetteStrength: 0.18,  // soft edge falloff
-      contrast: 1.03,
-      brightness: 1.18,        // overall exposure lift
-      saturation: 0.95,        // slightly muted, painterly (not garish)
-      hazeStrength: 0.9,       // atmospheric perspective into the horizon
+      posterizeLevels: 16.0,   // flatter candy-cartoon colour bands
+      sepiaStrength: 0.0,      // no aged-film wash — keep colours true
+      grainStrength: 0.010,    // barely-there texture (was paper-heavy)
+      vignetteStrength: 0.15,  // soft edge falloff
+      contrast: 1.12,          // punchy
+      brightness: 1.14,        // bright daylight
+      saturation: 1.55,        // candy-vivid colour pop
+      hazeStrength: 0.45,      // lighter atmospheric perspective
     };
 
     this.quadScene = new THREE.Scene();
@@ -74,9 +75,9 @@ export class VintageFX {
         cameraFar:      { value: this.camera.far },
         resolution:     { value: new THREE.Vector2(w, h) },
         uTime:          { value: 0 },
-        uInkColor:      { value: new THREE.Color(0x3a2c20) },
+        uInkColor:      { value: new THREE.Color(0x26303a) },
         uSepiaColor:    { value: new THREE.Color(0xffe7c8) },
-        uHazeColor:     { value: new THREE.Color(0xe8cba6) },
+        uHazeColor:     { value: new THREE.Color(0xbfe3ff) },
         uOutlineThick:  { value: p.outlineThickness },
         uOutlineStr:    { value: p.outlineStrength },
         uOutlineThresh: { value: p.outlineThreshold },
@@ -157,9 +158,8 @@ export class VintageFX {
           float lum = dot(color, vec3(0.299, 0.587, 0.114));
           vec3 sepia = vec3(lum) * uSepiaColor;
           color = mix(color, sepia, uSepia);
-          // gentle warm push
-          color.r *= 1.03;
-          color.b *= 0.96;
+          // faint sunny warmth in the highlights only (no muddy global tint)
+          color.r += (1.0 - color.r) * 0.02;
 
           // ---- Exposure lift + saturation pop (bring the colour back) ----
           color *= uBrightness;
