@@ -191,9 +191,23 @@ export class Truck {
       return m;
     });
 
+    // Keep the placeholder hidden so the player never sees the blocky stand-in
+    // pop into the real truck — Car1.glb is preloaded, so it appears almost
+    // instantly. A short fallback reveals the placeholder only if the model is
+    // unusually slow (or fails) so the truck is never invisible for long.
+    this.bodyVisual.visible = false;
+    for (const w of this.wheelMeshes) w.visible = false;
+    this._phFallback = setTimeout(() => {
+      if (this._placeholders.length) {
+        this.bodyVisual.visible = true;
+        for (const w of this.wheelMeshes) w.visible = true;
+      }
+    }, 500);
+
     // --- Load Car1.glb and replace placeholder when ready ---
     const loader = new GLTFLoader();
     loader.load('./Car1.glb', (gltf) => {
+      clearTimeout(this._phFallback);
       // Remove all placeholder children from the body-visual wrapper.
       for (const ph of this._placeholders) this.bodyVisual.remove(ph);
       this._placeholders = [];
@@ -261,9 +275,14 @@ export class Truck {
 
       // Hide placeholder wheels — the GLB has its own wheels baked in.
       for (const w of this.wheelMeshes) w.visible = false;
+      // Reveal the now-real truck (the body was hidden during loading).
+      this.bodyVisual.visible = true;
 
     }, undefined, (err) => {
       console.warn('Car1.glb failed to load — using placeholder geometry.', err);
+      clearTimeout(this._phFallback);
+      this.bodyVisual.visible = true;
+      for (const w of this.wheelMeshes) w.visible = true;
     });
   }
 

@@ -576,6 +576,12 @@ html, body {
   .hud-deliver { top: 10px; font-size: 13px; }
   .hud-warning, .hud-combo, .hud-phew { font-size: 13px; }
 
+  /* Customer speech bubble: pin it to the top edge (over the sky) and keep it
+     narrow so it clears the road ahead AND the cargo panel / pause buttons. */
+  .customer { top: 6px; max-width: min(340px, 52vw); font-size: 12px; line-height: 1.2;
+    padding: 6px 12px 6px 10px; gap: 7px; }
+  .customer .cust-avatar { font-size: 18px; }
+
   /* ---- Result card: compact so RETRY/GARAGE are never cut off ---- */
   /* dvh = visible height minus the browser toolbars (vh ignores them on iOS,
      which left the card taller than the screen and cut off the buttons). */
