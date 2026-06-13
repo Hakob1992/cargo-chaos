@@ -92,9 +92,12 @@ export class Menu {
     this.#initShowroom();
 
     // Entrance: title drops in, panels rise, delivery cards pop on a stagger.
+    // NB: gating containers (panels, cards) animate TRANSFORM ONLY — never
+    // opacity — so if GSAP's ticker stalls (background tab, slow load) they
+    // stay visible + clickable instead of being trapped at opacity 0.
     gsap.from(this.el.querySelector('.title-bar'), { y: -30, opacity: 0, duration: 0.4, ease: 'back.out(1.6)' });
-    gsap.from(this.el.querySelectorAll('.panel'), { y: 26, opacity: 0, duration: 0.45, stagger: 0.08, ease: 'power2.out', delay: 0.06 });
-    gsap.from(this.el.querySelectorAll('.delivery-card'), { scale: 0.8, opacity: 0, duration: 0.35, stagger: 0.04, ease: 'back.out(2)', delay: 0.22 });
+    gsap.from(this.el.querySelectorAll('.panel'), { y: 26, duration: 0.45, stagger: 0.08, ease: 'power2.out', delay: 0.06, clearProps: 'transform' });
+    gsap.from(this.el.querySelectorAll('.delivery-card'), { scale: 0.85, duration: 0.35, stagger: 0.04, ease: 'back.out(2)', delay: 0.22, clearProps: 'transform' });
   }
 
   // ---- Showroom (3D vehicle viewer) ---------------------------------------
@@ -206,9 +209,11 @@ export class Menu {
         <button class="route-cancel" data-cancel>BACK</button>
       </div>`;
     this.el.appendChild(overlay);
-    gsap.from(overlay, { opacity: 0, duration: 0.2, ease: 'power1.out' });
-    gsap.from(overlay.querySelector('.route-panel'), { scale: 0.85, y: 20, opacity: 0, duration: 0.35, ease: 'back.out(1.8)' });
-    gsap.from(overlay.querySelectorAll('.route-card'), { y: 24, opacity: 0, duration: 0.34, stagger: 0.09, ease: 'back.out(1.6)', delay: 0.14 });
+    // The panel's entrance is the existing CSS `cardIn` (opacity+scale) — do NOT
+    // animate it (or the backdrop) with GSAP: a same-frame gsap.from would read
+    // the CSS keyframe's opacity:0 as its target and lock the picker invisible.
+    // GSAP only adds a stagger to the route cards (transform-only = fail-safe).
+    gsap.from(overlay.querySelectorAll('.route-card'), { y: 24, duration: 0.34, stagger: 0.09, ease: 'back.out(1.6)', delay: 0.12, clearProps: 'transform' });
     overlay.querySelector('[data-cancel]').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     for (const btn of overlay.querySelectorAll('[data-route]')) {
@@ -351,9 +356,10 @@ export class Menu {
         </div>
       </div>
     `;
-    // Backdrop fades, the card springs in (before the staggered star slams).
+    // Backdrop fades, the card springs in (transform-only so it can't get
+    // trapped invisible — the card holds the GARAGE/RETRY buttons).
     gsap.from(this.el.querySelector('.result-backdrop'), { opacity: 0, duration: 0.22, ease: 'power1.out' });
-    gsap.from(this.el.querySelector('.result-card'), { scale: 0.7, y: 30, opacity: 0, duration: 0.42, ease: 'back.out(1.7)' });
+    gsap.from(this.el.querySelector('.result-card'), { scale: 0.7, y: 30, duration: 0.42, ease: 'back.out(1.7)', clearProps: 'transform' });
 
     this.el.querySelector('[data-garage]').addEventListener('click', () => this.game.returnToGarage());
     this.el.querySelector('[data-retry]').addEventListener('click', () =>

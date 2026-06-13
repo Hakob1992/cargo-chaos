@@ -203,6 +203,7 @@ export class Game {
     this.#snapCamera();
 
     // Hand the camera to GSAP for the orbit-sweep + 3·2·1·GO! countdown.
+    this._cineGuard = 0;
     this.cinematics.runStart();
   }
 
@@ -339,6 +340,15 @@ export class Game {
     // Keyboard shortcuts: M mutes anytime; P / Esc toggles pause while driving.
     if (this.input.consumeMute()) this.toggleMute();
     if (this.input.consumePause()) this.togglePause();
+
+    // Safety: a cinematic must never trap control. If GSAP's ticker stalls and
+    // the sequence overruns (≈ orbit + countdown), force-release to gameplay.
+    if (this.cinematic) {
+      this._cineGuard = (this._cineGuard || 0) + dt;
+      if (this._cineGuard > 8) this.cinematics.cancel();
+    } else {
+      this._cineGuard = 0;
+    }
 
     if (this.state === 'driving' && !this.paused && !this.cinematic) {
       if (this.hitstop > 0) {

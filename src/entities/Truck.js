@@ -20,12 +20,12 @@ const LEAN_PITCH_MAX = 0.06;   // max pitch under throttle/brake (rad)
 const LEAN_PITCH_PER_ACCEL = 0.012; // pitch per m/s² of longitudinal accel
 const LEAN_SPRING_K = 60;      // lean spring stiffness
 const LEAN_SPRING_DAMP = 9;    // lean spring damping
-const BOUNCE_MIN_FALL = 2.0;   // fall speed (m/s) that earns a landing bounce
-const BOUNCE_KICK = 0.18;      // bounce velocity impulse per m/s of fall past the min
-const BOUNCE_KICK_MAX = 1.0;   // cap on a single landing's kick
-const BOUNCE_MAX = 0.14;       // clamp on the visual bounce offset (m)
+const BOUNCE_MIN_FALL = 2.6;   // fall speed (m/s) that earns a landing bounce
+const BOUNCE_KICK = 0.10;      // bounce velocity impulse per m/s of fall past the min
+const BOUNCE_KICK_MAX = 0.5;   // cap on a single landing's kick
+const BOUNCE_MAX = 0.07;       // clamp on the visual bounce offset (m)
 const BOUNCE_SPRING_K = 60;    // bounce spring stiffness (softer = fatter bounce)
-const BOUNCE_SPRING_DAMP = 7;  // bounce spring damping
+const BOUNCE_SPRING_DAMP = 9;  // bounce spring damping (higher = settles faster)
 
 export class Truck {
   constructor(scene, physics, startPos, tuning) {

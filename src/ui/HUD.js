@@ -40,14 +40,14 @@ export class HUD {
       <div class="hud-combo hidden" data-combo></div>
 
       <div class="touch-controls">
-        <div class="dpad">
-          <button data-tc="left">◀</button>
-          <button data-tc="right">▶</button>
+        <div class="joystick" data-joy>
+          <div class="joy-base"></div>
+          <div class="joy-knob" data-joy-knob></div>
+          <div class="joy-hint">DRIVE</div>
         </div>
-        <div class="pedals">
-          <button data-tc="brake">BRAKE</button>
-          <button data-tc="rev">▼</button>
-          <button data-tc="gas">▲</button>
+        <div class="touch-right">
+          <button class="tc-recover" data-tc-recover aria-label="Flip upright">⟲</button>
+          <button class="tc-brake" data-tc="brake">BRAKE</button>
         </div>
       </div>
     `;
@@ -79,17 +79,64 @@ export class HUD {
 
   #wireTouch() {
     const t = this.input.touch;
-    const map = {
-      left: [() => (t.steer = -1), () => (t.steer = 0)],
-      right: [() => (t.steer = 1), () => (t.steer = 0)],
-      gas: [() => (t.throttle = 1), () => (t.throttle = 0)],
-      rev: [() => (t.throttle = -1), () => (t.throttle = 0)],
-      brake: [() => (t.brake = true), () => (t.brake = false)],
+
+    // Analog virtual joystick: push up = throttle, down = reverse, left/right =
+    // steer. The knob follows the thumb (clamped to the base radius); releasing
+    // recenters it and zeroes the inputs. Pointer Events cover touch + mouse.
+    const joy = this.el.querySelector('[data-joy]');
+    const knob = this.el.querySelector('[data-joy-knob]');
+    const DEAD = 0.14;        // ignore tiny wobble near centre
+    let radius = 60;          // recomputed from the rendered base on each grab
+    let activeId = null;
+
+    const apply = (dx, dy) => {
+      const r = radius || 1;
+      let nx = Math.max(-1, Math.min(1, dx / r));
+      let ny = Math.max(-1, Math.min(1, -dy / r)); // screen-y is down → invert
+      knob.style.transform = `translate(${nx * r}px, ${-ny * r}px)`;
+      // Deadzone + rescale so the edge still reaches full ±1.
+      const dz = (v) => (Math.abs(v) < DEAD ? 0 : (v - Math.sign(v) * DEAD) / (1 - DEAD));
+      t.steer = dz(nx);
+      t.throttle = dz(ny);
     };
-    for (const [key, [set, clear]] of Object.entries(map)) {
-      const btn = this.el.querySelector(`[data-tc="${key}"]`);
-      this.input.bindButton(btn, set, clear);
-    }
+    const recenter = () => {
+      knob.style.transform = 'translate(0px, 0px)';
+      t.steer = 0; t.throttle = 0;
+    };
+    const grab = (e) => {
+      e.preventDefault();
+      activeId = e.pointerId ?? 'mouse';
+      const rect = joy.getBoundingClientRect();
+      radius = rect.width / 2;
+      this._joyCx = rect.left + radius;
+      this._joyCy = rect.top + radius;
+      joy.classList.add('active');
+      apply(e.clientX - this._joyCx, e.clientY - this._joyCy);
+    };
+    const move = (e) => {
+      if (activeId === null) return;
+      if (e.pointerId !== undefined && e.pointerId !== activeId) return;
+      e.preventDefault();
+      apply(e.clientX - this._joyCx, e.clientY - this._joyCy);
+    };
+    const release = (e) => {
+      if (activeId === null) return;
+      if (e.pointerId !== undefined && e.pointerId !== activeId) return;
+      activeId = null;
+      joy.classList.remove('active');
+      recenter();
+    };
+    joy.addEventListener('pointerdown', grab);
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+
+    // Brake holds; recover (⟲) flips the truck upright on tap.
+    const brakeBtn = this.el.querySelector('[data-tc="brake"]');
+    this.input.bindButton(brakeBtn, () => (t.brake = true), () => (t.brake = false));
+    const recoverBtn = this.el.querySelector('[data-tc-recover]');
+    const tapRecover = (e) => { e.preventDefault(); this.input.resetRequested = true; };
+    recoverBtn.addEventListener('pointerdown', tapRecover);
   }
 
   onDeliver(cb) {

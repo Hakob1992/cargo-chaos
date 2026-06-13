@@ -14,7 +14,6 @@ export class Cinematics {
     this.game = game;
     this.root = document.getElementById('ui-root');
     this._tl = null;
-    this._skip = null;
     window.__gsap = gsap; // quick live tuning / debugging from the console
   }
 
@@ -48,11 +47,6 @@ export class Cinematics {
     });
     tl.to(p, { angle: Math.PI, radius: 11, height: 4.8, fov: 60, duration: 2.0, ease: 'power3.inOut' });
     this._tl = tl;
-
-    // Let the player skip the flourish with any key / click / tap.
-    this.#armSkip(() => {
-      tl.progress(1); // jump to the end → triggers onComplete → countdown
-    });
   }
 
   #countdown(onGo) {
@@ -62,7 +56,6 @@ export class Cinematics {
     this.root.appendChild(el);
 
     const finish = () => {
-      this.#disarmSkip();
       gsap.killTweensOf(el);
       el.remove();
       g.cinematic = false;
@@ -85,8 +78,6 @@ export class Cinematics {
       tl.to(el, { scale: isGo ? 1.8 : 1.35, opacity: 0, duration: isGo ? 0.45 : 0.42, ease: 'power1.in' }, '+=0.32');
     });
     this._tl = tl;
-    // A skip during the countdown jumps straight to GO.
-    this.#armSkip(() => tl.progress(1));
   }
 
   // Confetti + coin burst over the result card. Purely decorative DOM bits in
@@ -126,29 +117,12 @@ export class Cinematics {
     gsap.delayedCall(big ? 2.8 : 2.4, () => layer.remove());
   }
 
-  // ---- skip plumbing -------------------------------------------------------
-
-  #armSkip(fn) {
-    this.#disarmSkip();
-    this._skip = (e) => {
-      if (e.type === 'keydown' && (e.key === 'Tab' || e.key === 'F5' || e.metaKey || e.ctrlKey)) return;
-      fn();
-    };
-    window.addEventListener('keydown', this._skip);
-    window.addEventListener('pointerdown', this._skip);
-  }
-
-  #disarmSkip() {
-    if (!this._skip) return;
-    window.removeEventListener('keydown', this._skip);
-    window.removeEventListener('pointerdown', this._skip);
-    this._skip = null;
-  }
-
-  // Abort any running sequence (e.g. the player bailed to the garage).
+  // Abort any running sequence (player bailed to the garage, or the safety
+  // guard fired). Tears down the timeline + any leftover countdown DOM and
+  // hands control straight back to gameplay.
   cancel() {
-    this.#disarmSkip();
     if (this._tl) { this._tl.kill(); this._tl = null; }
+    this.root.querySelectorAll('.countdown').forEach((el) => el.remove());
     this.game.cinematic = false;
   }
 }

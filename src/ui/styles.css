@@ -201,19 +201,64 @@ html, body {
 }
 
 /* touch controls (shown on coarse pointers) */
-.touch-controls { display: none; }
-.touch-controls button {
-  background: rgba(38,38,53,0.9); color: #fff; border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 12px; font-size: 20px; font-weight: 800; width: 64px; height: 64px;
+/* On-screen controls: hidden by default, shown on touch devices. The container
+   passes taps through; only the joystick + buttons are interactive. */
+.touch-controls { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 24; }
+
+/* Analog virtual joystick (bottom-left) */
+.joystick {
+  position: absolute; bottom: 26px; left: 26px; width: 150px; height: 150px;
+  pointer-events: auto; touch-action: none; user-select: none;
 }
-.touch-controls button:active { background: var(--accent-2); }
-.dpad { position: absolute; bottom: 28px; left: 24px; display: flex; gap: 12px; }
-.pedals { position: absolute; bottom: 28px; right: 24px; display: flex; gap: 12px; align-items: flex-end; }
-.pedals [data-tc="brake"] { width: 72px; height: 48px; font-size: 13px; }
+.joy-base {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%, rgba(255,255,255,0.14), rgba(20,22,32,0.5));
+  border: 2px solid rgba(255,255,255,0.22); box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+}
+.joy-knob {
+  position: absolute; left: 50%; top: 50%; width: 66px; height: 66px; margin: -33px 0 0 -33px;
+  border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff, var(--accent) 70%, var(--accent-2));
+  border: 2px solid rgba(255,255,255,0.5); box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  transition: transform 0.07s ease-out;
+}
+.joystick.active .joy-knob { transition: none; }
+.joy-hint {
+  position: absolute; left: 0; right: 0; bottom: -22px; text-align: center;
+  font-family: var(--font-display); font-size: 13px; letter-spacing: 2px; color: rgba(255,255,255,0.75);
+}
+
+/* Right-side: recover (flip upright) + brake */
+.touch-right { position: absolute; bottom: 26px; right: 26px; display: flex; gap: 14px; align-items: flex-end; }
+.touch-right button {
+  pointer-events: auto; touch-action: none; user-select: none;
+  background: rgba(38,38,53,0.92); color: #fff; border: 2px solid rgba(255,255,255,0.16);
+  border-radius: 16px; font-weight: 800;
+}
+.touch-right button:active { background: var(--accent-2); transform: scale(0.96); }
+.tc-recover { width: 64px; height: 64px; font-size: 26px; }
+.tc-brake { width: 96px; height: 84px; font-size: 16px; letter-spacing: 1px; }
 
 @media (pointer: coarse) {
   .touch-controls { display: block; }
-  .speedo { bottom: 110px; }
+  .speedo { bottom: 120px; }
+  .hud-deliver { bottom: 130px; }
+}
+
+/* Landscape gate: ask touch users in portrait to rotate. */
+#rotate-gate { display: none; }
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate-gate {
+    display: grid; place-items: center; position: fixed; inset: 0; z-index: 200;
+    background: radial-gradient(120% 120% at 50% 0%, #20283a 0%, #0d0d14 70%);
+    color: #fff; text-align: center; padding: 30px;
+  }
+  #rotate-gate .rotate-icon { font-size: 64px; animation: rotateHint 1.8s ease-in-out infinite; }
+  #rotate-gate .rotate-text {
+    font-family: var(--font-display); font-size: 22px; letter-spacing: 1px; margin-top: 16px; line-height: 1.4;
+  }
+}
+@keyframes rotateHint {
+  0%, 100% { transform: rotate(-12deg); } 50% { transform: rotate(78deg); }
 }
 
 /* ---------------- Garage / Menu ---------------- */
@@ -328,7 +373,9 @@ html, body {
   border-radius: 18px; padding: 28px 30px; width: 380px; text-align: center;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   animation: cardIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1); }
-@keyframes cardIn { from { transform: scale(0.82); opacity: 0; } }
+/* No opacity:0 — a stalled/throttled animation must never leave these gating
+   panels (route picker, result card) invisible. They only scale in. */
+@keyframes cardIn { from { transform: scale(0.82); } }
 .r-title { color: var(--muted); letter-spacing: 3px; font-size: 13px; }
 .result-card.is-failed { border-color: rgba(214, 67, 31, 0.7); box-shadow: 0 20px 60px rgba(120, 20, 10, 0.55);
   /* Failed card drops in crooked — a comedic thud to match the wreck. */
