@@ -87,6 +87,10 @@ export class Cargo {
     this.world = physics.world;
     this.delivery = delivery;
     this.truck = truck;
+    // Resolves once the cargo visual is ready (custom model loaded, or — for
+    // procedurally-built loads like the cake — immediately). The loading bar
+    // waits on this alongside the truck.
+    this.ready = new Promise((res) => { this._markReady = res; });
     // Phase 3 — the cargo's data-driven personality (see cargoTypes.js).
     this.behavior = resolveBehavior(delivery.behavior);
     this.isCake = this.behavior.render === 'cake';
@@ -204,6 +208,8 @@ export class Cargo {
     this.physics.tag(this.world.createCollider(col, this.body), 'cargo');
 
     this.#buildMesh(hx, hy, hz);
+    // No custom model to stream → the visual is ready right now.
+    if (!this.delivery.model) this._markReady?.();
   }
 
   // The mesh is a Group that follows the physics body (set in sync). Its child
@@ -314,9 +320,13 @@ export class Cargo {
         if (tints.length) this._tintTargets = tints;
         // Re-apply the current damage stage onto the freshly loaded materials.
         if (this.damage > 0 && !this.broken) this.#applyBoxStage();
+        this._markReady?.();
       },
       undefined,
-      (err) => console.warn(`Cargo: ${file} failed to load — using placeholder box.`, err)
+      (err) => {
+        console.warn(`Cargo: ${file} failed to load — using placeholder box.`, err);
+        this._markReady?.();
+      }
     );
   }
 

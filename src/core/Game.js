@@ -148,7 +148,7 @@ export class Game {
 
   // ---- Game flow -----------------------------------------------------------
 
-  startDelivery(delivery, routeId = 'highway') {
+  async startDelivery(delivery, routeId = 'highway') {
     this.#teardownRun();
     // Called from a click handler — a valid user gesture to start audio.
     this.audio.unlock();
@@ -182,9 +182,16 @@ export class Game {
     this._prevSquash = 0;
     this._scared = false;
     this.state = 'driving';
+    // Freeze the sim + follow-camera through the loading bar AND the cinematic
+    // (both gate on `cinematic`), so nothing animates behind the overlay.
+    this.cinematic = true;
     this.menu.hide();
     this.hud.show(delivery, this.route, { count: this.save.combo ?? 0, at: COMBO_AT, mult: COMBO_MULT });
     this.customer.bind(delivery);
+
+    // Loading bar: wait until the truck + cargo visuals are ready (models are
+    // preloaded, so this is quick — a short minimum keeps the bar readable).
+    await this.#awaitRunAssets();
     this.customer.onStart();
 
     // Settle the truck onto the road (a few neutral physics steps) so the
@@ -205,6 +212,32 @@ export class Game {
     // Hand the camera to GSAP for the orbit-sweep + 3·2·1·GO! countdown.
     this._cineGuard = 0;
     this.cinematics.runStart();
+  }
+
+  // Show the loading overlay (reused from boot) and fill its bar as the truck +
+  // cargo models become ready. Resolves once both are ready and a short minimum
+  // has elapsed (so the bar is actually seen), with a hard timeout safety net.
+  #awaitRunAssets() {
+    const overlay = document.getElementById('loading');
+    const fill = document.getElementById('ld-fill');
+    const tip = document.getElementById('ld-tip');
+    if (tip) tip.textContent = `Loading ${this.activeDelivery.name}…`;
+    if (fill) fill.style.width = '8%';
+    overlay?.classList.remove('done');
+
+    let done = 0;
+    const bump = () => { done++; if (fill) fill.style.width = `${8 + Math.round((done / 2) * 92)}%`; };
+    const ready = Promise.all([
+      Promise.resolve(this.truck?.ready).then(bump, bump),
+      Promise.resolve(this.cargo?.ready).then(bump, bump),
+    ]);
+    const minShown = new Promise((r) => setTimeout(r, 550));
+    const safety = new Promise((r) => setTimeout(r, 5000));
+
+    return Promise.race([Promise.all([ready, minShown]), safety]).then(() => {
+      if (fill) fill.style.width = '100%';
+      overlay?.classList.add('done'); // CSS fades it out over the cinematic start
+    });
   }
 
   finishDelivery(failed = false) {

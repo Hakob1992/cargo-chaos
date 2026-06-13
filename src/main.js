@@ -8,11 +8,8 @@ const tipEl = document.getElementById('ld-tip');
 const loadingEl = document.getElementById('loading');
 const setBar = (f) => { if (fillEl) fillEl.style.width = `${Math.round(Math.min(1, Math.max(0, f)) * 100)}%`; };
 const setTip = (t) => { if (tipEl) tipEl.textContent = t; };
-const hideLoading = () => {
-  if (!loadingEl) return;
-  loadingEl.classList.add('done');
-  setTimeout(() => loadingEl.remove(), 500);
-};
+// Hide (don't remove) the overlay so the run-start loading bar can reuse it.
+const hideLoading = () => loadingEl?.classList.add('done');
 
 // Bootstrap: Rapier's WASM must finish loading before we build any physics
 // world, then we preload every model/texture so play starts with no pop-in or

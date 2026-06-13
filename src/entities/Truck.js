@@ -191,6 +191,10 @@ export class Truck {
       return m;
     });
 
+    // Resolves once the truck's visual is settled (real model in, or the
+    // placeholder revealed as fallback) — the loading bar waits on this.
+    this.ready = new Promise((res) => { this._markReady = res; });
+
     // Keep the placeholder hidden so the player never sees the blocky stand-in
     // pop into the real truck — Car1.glb is preloaded, so it appears almost
     // instantly. A short fallback reveals the placeholder only if the model is
@@ -202,6 +206,7 @@ export class Truck {
         this.bodyVisual.visible = true;
         for (const w of this.wheelMeshes) w.visible = true;
       }
+      this._markReady?.();
     }, 500);
 
     // --- Load Car1.glb and replace placeholder when ready ---
@@ -277,12 +282,14 @@ export class Truck {
       for (const w of this.wheelMeshes) w.visible = false;
       // Reveal the now-real truck (the body was hidden during loading).
       this.bodyVisual.visible = true;
+      this._markReady?.();
 
     }, undefined, (err) => {
       console.warn('Car1.glb failed to load — using placeholder geometry.', err);
       clearTimeout(this._phFallback);
       this.bodyVisual.visible = true;
       for (const w of this.wheelMeshes) w.visible = true;
+      this._markReady?.();
     });
   }
 
