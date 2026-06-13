@@ -272,9 +272,26 @@ export class Menu {
     return '';
   }
 
+  // One-line customer verdict for the result card (Phase 7). Shows who the
+  // cargo belonged to and whether their feelings about timing moved the tip.
+  #tipLine(tip) {
+    if (!tip || !tip.persona) return '';
+    const p = tip.persona;
+    if (tip.timeVerdict === 'fast' && tip.mult > 1) {
+      const pct = Math.round((tip.mult - 1) * 100);
+      const big = tip.mult >= 1.9 ? ' big' : '';
+      return `<div class="r-tip fast${big}">${p.avatar} ${p.name} — ${tip.mult >= 1.9 ? 'DOUBLE PAY' : `+${pct}% TIP`} for speed!</div>`;
+    }
+    if (tip.timeVerdict === 'late' && tip.mult < 1) {
+      const pct = Math.round((1 - tip.mult) * 100);
+      return `<div class="r-tip late">${p.avatar} ${p.name} — docked ${pct}% for being late</div>`;
+    }
+    return `<div class="r-tip">${p.avatar} ${p.name}</div>`;
+  }
+
   showResult({ delivery, integrity, rating, earnings, time, insured, failed = false, failReason = null,
                stars = 1, breakdown = { condition: 0, time: 0, style: 0 }, totalStars = 0, route = null,
-               combo = null }) {
+               combo = null, tip = null }) {
     this.#disposeViewer();
     this.el.classList.remove('hidden');
     const cls = rating.toLowerCase();
@@ -300,6 +317,7 @@ export class Menu {
           <div class="r-cargo">${delivery.name}${reasonLabel ? ` — ${reasonLabel}` : ''}</div>
           ${route ? `<div class="r-route ${route.tag === 'RISKY' ? 'risky' : ''}">via ${route.name}${route.payoutMult > 1 ? ` · ×${route.payoutMult} PAY` : ''}</div>` : ''}
           ${this.#comboLine(combo)}
+          ${this.#tipLine(tip)}
           <div class="r-stars">${starRow}</div>
           ${isNewBest ? '<div class="r-newbest">NEW BEST!</div>' : ''}
           <div class="r-breakdown">

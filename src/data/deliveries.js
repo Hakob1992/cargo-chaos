@@ -23,6 +23,7 @@ export const DELIVERIES = [
     model: 'CardboardBoxes.glb',
     color: 0xc8965a,
     behavior: 'standard',
+    customer: 'mover',
   },
   {
     id: 'glass',
@@ -39,6 +40,7 @@ export const DELIVERIES = [
     model: 'GlassPanels.glb',
     color: 0x8fd0e8,
     behavior: 'glass_vase',
+    customer: 'architect',
   },
   {
     // Added in Phase 3 with NO engine changes — pure data, reusing the box
@@ -54,6 +56,7 @@ export const DELIVERIES = [
     model: 'FishTank.glb',
     color: 0x4aa3d6,
     behavior: 'fish_tank',
+    customer: 'kid',
   },
   {
     id: 'cake',
@@ -67,6 +70,7 @@ export const DELIVERIES = [
     model: 'WeddingCake.glb',
     color: 0xf4c6d0,
     behavior: 'birthday_cake',
+    customer: 'bride',
   },
   {
     id: 'barrels',
@@ -79,6 +83,7 @@ export const DELIVERIES = [
     size: [0.5, 0.55, 0.55],
     color: 0xd8531f,
     behavior: 'gas_canister',
+    customer: 'foreman',
   },
   {
     id: 'dino-egg',
@@ -91,6 +96,7 @@ export const DELIVERIES = [
     size: [0.5, 0.6, 0.55],
     color: 0xe8dcb0,
     behavior: 'glass_vase',
+    customer: 'professor',
   },
   {
     id: 'artifact',
@@ -103,6 +109,7 @@ export const DELIVERIES = [
     size: [0.48, 0.6, 0.5],
     color: 0x7be0a0,
     behavior: 'standard',
+    customer: 'agent',
   },
   {
     id: 'nuke',
@@ -115,6 +122,7 @@ export const DELIVERIES = [
     size: [0.48, 0.5, 0.5],
     color: 0xf0e040,
     behavior: 'gas_canister',
+    customer: 'general',
   },
   {
     id: 'dragon',
@@ -127,6 +135,7 @@ export const DELIVERIES = [
     size: [0.55, 0.75, 0.6],
     color: 0xa05cc0,
     behavior: 'live_animals',
+    customer: 'wizard',
   },
 ];
 

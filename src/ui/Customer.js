@@ -1,29 +1,10 @@
+import { resolveCustomer } from '../data/customers.js';
+
 // The customer — a speech bubble that reacts to the run in real time. Giving the
 // cargo a worried owner turns a damage number into an emotional stake ("THAT CAKE
-// COST $10,000!"). Lines are cargo-specific (the cake is the star) with a generic
-// fallback, gated by a cooldown so they punctuate the drama instead of spamming.
-const LINES = {
-  cake: {
-    avatar: '👰',
-    start: ['Please… deliver my wedding cake in one piece!'],
-    bump: ['Was that a pothole?!', 'Be careful with my cake!', 'Easy — EASY!',
-      'My grandmother made that recipe!', 'I felt that one!'],
-    nearFall: ['THAT CAKE COST $10,000!!', 'NO no no — don\'t you DARE!', 'KEEP IT LEVEL!'],
-    perfect: ['It\'s PERFECT! Bless you! 😭'],
-    good: ['Phew… a few smudges, but it\'ll do. Thank you!'],
-    bad: ['My wedding is RUINED. 😡', 'What did you DO to my cake?!'],
-  },
-  default: {
-    avatar: '🧍',
-    start: ['Handle this with care, please.'],
-    bump: ['Hey — watch the bumps!', 'Careful back there!', 'Take it easy!'],
-    nearFall: ['Don\'t you dare drop it!', 'WHOA — keep it steady!'],
-    perfect: ['Flawless! Thank you!'],
-    good: ['Good enough. Thanks.'],
-    bad: ['This is a disaster…'],
-  },
-};
-
+// COST $10,000!"). Phase 7: every delivery names a personality in customers.js
+// (data-driven, like cargo types) whose lines AND tips depend on quality + time.
+// A cooldown gates the chatter so lines punctuate the drama instead of spamming.
 export class Customer {
   constructor(root) {
     this.el = document.createElement('div');
@@ -38,10 +19,12 @@ export class Customer {
   }
 
   bind(delivery) {
-    this.lines = LINES[delivery.id] || LINES.default;
-    this.avatarEl.textContent = this.lines.avatar;
+    this.persona = resolveCustomer(delivery.customer);
+    this.lines = this.persona.lines;
+    this.avatarEl.textContent = this.persona.avatar;
     this.bumpIdx = 0;
     this.lastSpeak = -999;
+    this._hurried = false;
   }
 
   // Called every frame with the run clock so cooldowns are frame-rate independent.
@@ -64,7 +47,7 @@ export class Customer {
 
   onStart() {
     this.now = 0; this.lastSpeak = -999;
-    this.#say(this.lines.start[0], { duration: 3.5, urgent: true });
+    this.#say(this.#pick(this.lines.start), { duration: 3.5, urgent: true });
   }
 
   // A meaningful bump/impact — escalates through the bump lines.
@@ -78,11 +61,23 @@ export class Customer {
     this.#say(this.#pick(this.lines.nearFall), { duration: 2.2, cooldown: 1.6, urgent: true });
   }
 
-  // Final verdict, mapped from the rating label.
-  onResult(ratingLabel) {
+  // One nag the moment the run blows past par time (Game calls once).
+  onHurry() {
+    if (this._hurried) return;
+    this._hurried = true;
+    this.#say(this.#pick(this.lines.hurry), { duration: 2.6, urgent: true });
+  }
+
+  // Final verdict. Time outranks quality when a tip changed hands (fast/late
+  // lines acknowledge the money); a wrecked load is ALWAYS the bad line.
+  onResult(ratingLabel, timeVerdict = 'ontime') {
     const r = ratingLabel.toLowerCase();
-    const bucket = (r === 'perfect' || r === 'excellent') ? 'perfect'
+    const quality = (r === 'perfect' || r === 'excellent') ? 'perfect'
       : (r === 'good') ? 'good' : 'bad';
+    let bucket = quality;
+    if (quality !== 'bad' && (timeVerdict === 'fast' || timeVerdict === 'late')) {
+      bucket = timeVerdict;
+    }
     this.#say(this.#pick(this.lines[bucket]), { duration: 4, cooldown: 0, urgent: true });
   }
 

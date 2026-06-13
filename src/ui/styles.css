@@ -464,6 +464,12 @@ html, body {
 .r-combo.active { color: var(--accent); animation: starIn 0.4s ease 0.2s backwards; }
 .r-combo.broken { color: #ff7a6a; }
 
+/* Result-card customer tip verdict (Phase 7) */
+.r-tip { font-size: 12.5px; font-weight: 700; letter-spacing: 0.5px; margin: 0 0 4px; color: #cdd6e0; }
+.r-tip.fast { color: #7be0a0; font-weight: 800; }
+.r-tip.fast.big { color: var(--accent); animation: starIn 0.4s ease 0.25s backwards; }
+.r-tip.late { color: #ff9a6a; }
+
 /* ---------------- Garage: stars + gated deliveries ---------------- */
 .stars-total {
   font-family: var(--font-display); color: var(--accent); font-size: 18px;

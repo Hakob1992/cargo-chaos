@@ -10,6 +10,7 @@ import { UPGRADES } from '../data/upgrades.js';
 import { VEHICLES } from '../data/vehicles.js';
 import { ratingFor } from '../data/deliveries.js';
 import { ROUTES } from '../data/routes.js';
+import { resolveCustomer } from '../data/customers.js';
 import { HUD } from '../ui/HUD.js';
 import { Menu } from '../ui/Menu.js';
 import { Customer } from '../ui/Customer.js';
@@ -194,7 +195,21 @@ export class Game {
 
     const integrity = this.cargo.integrity;
     const rating = ratingFor(integrity);
-    this.customer.onResult(rating.label);
+
+    // Phase 7 — the customer judges WHEN it arrived, not just how it looks.
+    // fast/late verdicts come from par time × the customer's own thresholds,
+    // and move the payout (the professor pays double for a warm egg; the
+    // foreman docks you for sandwiches eaten on his dime).
+    const persona = resolveCustomer(this.activeDelivery.customer);
+    const timeVerdict = this.elapsed <= this.targetTime * persona.fastThresh ? 'fast'
+      : this.elapsed >= this.targetTime * persona.lateThresh ? 'late' : 'ontime';
+    let customerMult = 1;
+    if (!failed) {
+      if (timeVerdict === 'fast') customerMult += persona.fastBonus;
+      else if (timeVerdict === 'late') customerMult = Math.max(0.1, customerMult - persona.latePenalty);
+    }
+    this.customer.onResult(rating.label, timeVerdict);
+
     const floor = this.truck.tuning.insurance; // insurance payout floor
     const payoutFrac = Math.max(rating.payout, floor);
     // The risky route pays a bonus on whatever survives the trip.
@@ -212,7 +227,7 @@ export class Game {
     if (wasPerfect) this.audio.playComboUp(Math.min(combo, 5));
     else if (prevCombo >= 2) this.audio.playComboBreak(); // a real streak died
 
-    const earnings = Math.round(this.activeDelivery.reward * payoutFrac * routeMult * comboMult);
+    const earnings = Math.round(this.activeDelivery.reward * payoutFrac * routeMult * comboMult * customerMult);
 
     // Star rating from three inputs: condition, time vs par, and clean style.
     const score = this.#computeStars(integrity, failed);
@@ -236,6 +251,7 @@ export class Game {
       totalStars: this.save.totalStars(),
       route: this.route,
       combo: { count: combo, prev: prevCombo, mult: comboMult, at: COMBO_AT },
+      tip: { persona, timeVerdict, mult: customerMult },
     });
   }
 
@@ -460,9 +476,11 @@ export class Game {
     }
     if (this.cargo.broken) this._scared = false;
 
-    // Customer reacts: panic when the cargo leans dangerously (≈ >43°).
+    // Customer reacts: panic when the cargo leans dangerously (≈ >43°), and a
+    // single "hurry up" nag the moment the run blows past par time.
     this.customer.setClock(this.elapsed);
     if ((this.cargo.lastTilt ?? 0) > 0.75 && !this.cargo.broken) this.customer.onNearFall();
+    if (this.elapsed > this.targetTime) this.customer.onHurry();
 
     // Off-road feedback: warn the player, rumble the camera over rough ground,
     // and make the passenger wince while the cargo is taking terrain damage.
