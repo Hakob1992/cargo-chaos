@@ -364,6 +364,11 @@ html, body {
 }
 .delivery-card:hover { transform: translateY(-3px); border-color: var(--cargo-color); background: rgba(255,255,255,0.07); }
 .delivery-card .d-icon { font-size: 38px; line-height: 1; margin: 6px 0 8px; filter: drop-shadow(0 6px 10px rgba(0,0,0,0.5)); }
+.delivery-card .d-img {
+  display: block; width: 62px; height: 62px; margin: 0 auto; object-fit: cover;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 6px 12px rgba(0,0,0,0.45); pointer-events: none;
+}
 .delivery-card .d-name { font-weight: 800; font-size: 13px; line-height: 1.15; }
 .delivery-card .d-tag { font-size: 9px; color: var(--muted); letter-spacing: 1px; margin: 2px 0 8px; }
 .delivery-card .d-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
@@ -708,6 +713,7 @@ html, body {
   .deliveries { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
   .delivery-card { padding: 8px 6px; }
   .delivery-card .d-icon { font-size: 26px; margin: 2px 0 4px; }
+  .delivery-card .d-img { width: 44px; height: 44px; border-radius: 9px; }
   .delivery-card .d-name { font-size: 11px; }
   .delivery-card .d-tag { font-size: 8px; margin: 1px 0 4px; }
   .delivery-card .d-reward { font-size: 12px; }

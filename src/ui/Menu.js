@@ -11,6 +11,11 @@ const CARGO_ICONS = {
   boxes: '📦', glass: '🪟', fishtank: '🐠', cake: '🎂', barrels: '🛢️',
   'dino-egg': '🥚', artifact: '👽', nuke: '☢️', dragon: '🐉',
 };
+// Real artwork (compressed) for cargo that has it; falls back to the emoji.
+const CARGO_IMAGES = {
+  boxes: 'icons/boxes.jpg',
+  'dino-egg': 'icons/dino-egg.jpg',
+};
 const UPGRADE_ICONS = {
   engine: '⚙️', tires: '🛞', suspension: '🔩', shocks: '🪛', straps: '🪢', insurance: '🛡️',
 };
@@ -165,8 +170,11 @@ export class Menu {
       const card = document.createElement('button');
       card.className = 'delivery-card' + (locked ? ' locked' : '');
       card.style.setProperty('--cargo-color', '#' + d.color.toString(16).padStart(6, '0'));
+      const icon = CARGO_IMAGES[d.id]
+        ? `<img class="d-img" src="./${CARGO_IMAGES[d.id]}" alt="" draggable="false">`
+        : (CARGO_ICONS[d.id] ?? '📦');
       card.innerHTML = `
-        <div class="d-icon">${CARGO_ICONS[d.id] ?? '📦'}</div>
+        <div class="d-icon">${icon}</div>
         <div class="d-name">${d.name}</div>
         <div class="d-tag">${d.tag}</div>
         <div class="d-foot">

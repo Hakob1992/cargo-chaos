@@ -407,6 +407,7 @@ export class Cargo {
         const t1 = byName.Tier1, t2 = byName.Tier2, t3 = byName.Tier3, cherry = byName.Cherry;
         if (!(t1 && t2 && t3 && cherry)) {
           console.warn(`Cargo: ${file} is missing Tier/Cherry nodes — keeping procedural cake.`);
+          this._markReady?.();
           return;
         }
 
@@ -431,9 +432,10 @@ export class Cargo {
         // Catch the model up to any damage already taken before it loaded.
         if (this.broken) this.#ruin();
         else if (this.damage > 0) this.#applyCakeStage();
+        this._markReady?.();
       },
       undefined,
-      (err) => console.warn(`Cargo: ${file} failed to load — using procedural cake.`, err)
+      (err) => { console.warn(`Cargo: ${file} failed to load — using procedural cake.`, err); this._markReady?.(); }
     );
   }
 
